@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Validation runner that patches complete Eastmoney universe pagination."""
+"""Validation runner for the date-consistent market snapshot."""
 from __future__ import annotations
+
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -8,63 +10,88 @@ import build_market_snapshot as base
 
 
 def fetch_stock_universe_complete() -> pd.DataFrame:
-    url = "https://82.push2.eastmoney.com/api/qt/clist/get"
-    rows: list[dict[str, object]] = []
-    seen: set[str] = set()
-    page_size = 100
-    expected_total: int | None = None
-
-    for page in range(1, 100):
-        params = {
-            "pn": page,
-            "pz": page_size,
-            "po": 1,
-            "np": 1,
-            "fltt": 2,
-            "invt": 2,
-            "fid": "f12",
-            "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
-            "fields": "f12,f14,f20,f21,f26",
-        }
-        data = base.retry(lambda params=params: base.em_get(url, params).json()).get("data") or {}
-        if expected_total is None:
-            raw_total = data.get("total") or data.get("count")
-            try:
-                expected_total = int(raw_total)
-            except (TypeError, ValueError):
-                expected_total = None
-        diff = data.get("diff") or []
-        if isinstance(diff, dict):
-            diff = list(diff.values())
-        if not diff:
-            break
-
-        new_count = 0
-        for item in diff:
-            code = base.normalize_code(item.get("f12"))
-            if not code or code in seen:
-                continue
-            seen.add(code)
-            new_count += 1
-            rows.append(
-                {
-                    "股票代码": code,
-                    "股票名称": str(item.get("f14") or "").strip(),
-                    "总市值": pd.to_numeric(item.get("f20"), errors="coerce"),
-                    "流通市值": pd.to_numeric(item.get("f21"), errors="coerce"),
-                    "上市日期": base.parse_listing_date(item.get("f26")),
-                }
-            )
-
-        if new_count == 0:
-            break
-        if expected_total is not None and len(seen) >= expected_total:
-            break
-
-    frame = pd.DataFrame(rows).drop_duplicates("股票代码")
+    """Use AKShare's paginated all-A endpoint; do not hand-roll a capped first page."""
+    raw = base.retry(base.ak.stock_zh_a_spot_em)
+    required = {"代码", "名称", "总市值", "流通市值"}
+    if raw.empty or not required.issubset(raw.columns):
+        raise RuntimeError(f"A股代码清单字段异常: {list(raw.columns)}")
+    frame = raw[["代码", "名称", "总市值", "流通市值"]].copy()
+    frame.columns = ["股票代码", "股票名称", "总市值", "流通市值"]
+    frame["股票代码"] = frame["股票代码"].map(base.normalize_code)
+    frame["股票名称"] = frame["股票名称"].astype(str).str.strip()
+    frame["总市值"] = pd.to_numeric(frame["总市值"], errors="coerce")
+    frame["流通市值"] = pd.to_numeric(frame["流通市值"], errors="coerce")
+    frame["上市日期"] = ""
+    frame = frame.drop_duplicates("股票代码")
     if len(frame) < 3000:
         raise RuntimeError(f"A股代码清单异常，仅取得 {len(frame)} 只")
     return frame
+
+
+def _listing_date_from_individual_info(code: str) -> str:
+    try:
+        info = base.retry(lambda: base.ak.stock_individual_info_em(symbol=code), attempts=2, delay=0.5)
+    except Exception:
+        return ""
+    if info is None or info.empty or not {"item", "value"}.issubset(info.columns):
+        return ""
+    values = {str(row["item"]).strip(): row["value"] for _, row in info.iterrows()}
+    for key in ("上市时间", "上市日期"):
+        text = str(values.get(key, "")).strip().replace("-", "").replace("/", "").replace(".0", "")
+        if len(text) == 8 and text.isdigit():
+            return text
+    return ""
+
+
+def fetch_one_stock_with_listing_check(row: pd.Series, target_date: str) -> dict[str, object]:
+    code = row["股票代码"]
+    target_dt = datetime.strptime(target_date, "%Y%m%d")
+    start_date = (target_dt - timedelta(days=45)).strftime("%Y%m%d")
+    raw = base.retry(
+        lambda: base.ak.stock_zh_a_hist(
+            symbol=code,
+            period="daily",
+            start_date=start_date,
+            end_date=target_date,
+            adjust="",
+            timeout=20,
+        ),
+        attempts=3,
+        delay=0.5,
+    )
+    required = {"日期", "收盘", "成交额", "涨跌幅"}
+    if raw.empty or not required.issubset(raw.columns):
+        raise base.NoTradingData("目标日无行情")
+    frame = raw.copy()
+    frame["日期"] = pd.to_datetime(frame["日期"], errors="coerce")
+    frame = frame.dropna(subset=["日期"]).sort_values("日期")
+    target = frame[frame["日期"].dt.strftime("%Y%m%d") == target_date]
+    if target.empty:
+        raise base.NoTradingData("目标日停牌或无交易")
+    record = target.iloc[-1]
+    amount = pd.to_numeric(record["成交额"], errors="coerce")
+    close = pd.to_numeric(record["收盘"], errors="coerce")
+    if pd.isna(amount) or pd.isna(close) or float(amount) <= 0 or float(close) <= 0:
+        raise base.NoTradingData("目标日停牌或无成交")
+
+    prior = frame[frame["日期"] < target_dt]
+    listing_date = ""
+    if prior.empty:
+        listing_date = _listing_date_from_individual_info(code)
+        if listing_date == target_date:
+            raise base.NoTradingData("上市首日")
+
+    return {
+        "日期": target_dt.strftime("%Y-%m-%d"),
+        "股票代码": code,
+        "股票名称": row["股票名称"],
+        "上市日期": listing_date,
+        "收盘价": float(close),
+        "涨跌幅": float(pd.to_numeric(record["涨跌幅"], errors="coerce")) / 100,
+        "成交额": float(amount),
+        "总市值": pd.to_numeric(row.get("总市值"), errors="coerce"),
+        "流通市值": pd.to_numeric(row.get("流通市值"), errors="coerce"),
+    }
 
 
 def skip_unavailable_official_sw(target_date: str, workers: int = 6):
@@ -84,6 +111,7 @@ def skip_unavailable_official_sw(target_date: str, workers: int = 6):
 
 
 base.fetch_stock_universe = fetch_stock_universe_complete
+base.fetch_one_stock = fetch_one_stock_with_listing_check
 base.fetch_sw_snapshot = skip_unavailable_official_sw
 
 if __name__ == "__main__":
