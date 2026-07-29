@@ -6,7 +6,7 @@ on:
       target_date:
         description: "Trading date in YYYYMMDD"
         required: true
-        default: "20260728"
+        default: "20260729"
   pull_request:
     paths:
       - build_market_snapshot.py
@@ -57,7 +57,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "date=${{ inputs.target_date }}" >> "$GITHUB_OUTPUT"
           else
-            echo "date=20260728" >> "$GITHUB_OUTPUT"
+            echo "date=20260729" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build snapshot
