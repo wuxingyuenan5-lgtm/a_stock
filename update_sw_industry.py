@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import math
 import time
@@ -16,6 +17,7 @@ import pandas as pd
 VOL_WINDOW = 20
 ANNUALIZATION_DAYS = 252
 DEFAULT_HISTORY_ROWS = 260
+DEFAULT_WORKERS = 4
 DATA_DIR = Path("data")
 HISTORY_FILE = DATA_DIR / "sw_industry_history.csv"
 LATEST_FILE = DATA_DIR / "sw_industry_latest.csv"
@@ -201,32 +203,46 @@ def write_outputs(data: pd.DataFrame, failures: list[dict[str, str]]) -> None:
         FAILURES_FILE.unlink()
 
 
-def update(history_rows: int, sleep_seconds: float) -> None:
+def update(history_rows: int, sleep_seconds: float, workers: int) -> None:
     if history_rows < VOL_WINDOW + 1:
         raise ValueError(f"history_rows 至少为 {VOL_WINDOW + 1}")
+    if workers < 1:
+        raise ValueError("workers 至少为 1")
 
     universe = load_universe()
     existing = load_existing_history()
     fresh_frames: list[pd.DataFrame] = []
     failures: list[dict[str, str]] = []
 
-    total = len(universe)
-    for position, (_, row) in enumerate(universe.iterrows(), start=1):
+    rows = [row.copy() for _, row in universe.iterrows()]
+    total = len(rows)
+
+    def run_one(position: int, row: pd.Series) -> pd.DataFrame:
         code = row["index_code"]
         logging.info("[%s/%s] 更新 %s %s", position, total, code, row["index_name"])
-        try:
-            fresh_frames.append(fetch_one_history(row, history_rows))
-        except Exception as exc:
-            logging.error("%s %s 更新失败：%s", code, row["index_name"], exc)
-            failures.append(
-                {
-                    "指数代码": code,
-                    "指数名称": str(row["index_name"]),
-                    "错误": str(exc),
-                }
-            )
         if sleep_seconds > 0:
-            time.sleep(sleep_seconds)
+            time.sleep(sleep_seconds * ((position - 1) % workers) / workers)
+        return fetch_one_history(row, history_rows)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(run_one, position, row): row
+            for position, row in enumerate(rows, start=1)
+        }
+        for future in as_completed(future_map):
+            row = future_map[future]
+            code = row["index_code"]
+            try:
+                fresh_frames.append(future.result())
+            except Exception as exc:
+                logging.error("%s %s 更新失败：%s", code, row["index_name"], exc)
+                failures.append(
+                    {
+                        "指数代码": code,
+                        "指数名称": str(row["index_name"]),
+                        "错误": str(exc),
+                    }
+                )
 
     if not fresh_frames and existing.empty:
         raise RuntimeError("全部指数均更新失败，且没有可回退的历史数据")
@@ -265,7 +281,13 @@ def parse_args() -> argparse.Namespace:
         "--sleep-seconds",
         type=float,
         default=0.15,
-        help="指数请求之间的等待秒数，默认 0.15",
+        help="并发请求的轻微错峰秒数，默认 0.15",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=f"并发请求数量，默认 {DEFAULT_WORKERS}",
     )
     return parser.parse_args()
 
@@ -276,7 +298,11 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    update(history_rows=args.history_rows, sleep_seconds=args.sleep_seconds)
+    update(
+        history_rows=args.history_rows,
+        sleep_seconds=args.sleep_seconds,
+        workers=args.workers,
+    )
 
 
 if __name__ == "__main__":
