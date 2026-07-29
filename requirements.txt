@@ -1,2 +1,2 @@
-akshare>=1.18.40,<2
+akshare==1.18.74
 pandas>=2.2,<3
