@@ -53,24 +53,40 @@ jobs:
           fi
 
       - name: Build snapshot
-        run: python build_market_snapshot.py --target-date "${{ steps.target.outputs.date }}" --workers 24
+        id: build
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p data
+          set +e
+          python build_market_snapshot.py --target-date "${{ steps.target.outputs.date }}" --workers 32 2>&1 | tee "data/market_snapshot_run_${{ steps.target.outputs.date }}.log"
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
 
-      - name: Upload generated CSV files
+      - name: Upload generated files
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: market-snapshot-${{ steps.target.outputs.date }}
-          path: data/*${{ steps.target.outputs.date }}.csv
+          path: |
+            data/*${{ steps.target.outputs.date }}.csv
+            data/market_snapshot_run_${{ steps.target.outputs.date }}.log
           if-no-files-found: warn
 
-      - name: Commit snapshot files
+      - name: Commit snapshot files and log
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A data
           if git diff --cached --quiet; then
             echo "No data changes"
-            exit 0
+          else
+            git commit -m "data: build A-share snapshot ${{ steps.target.outputs.date }}"
+            git push
           fi
-          git commit -m "data: build A-share snapshot ${{ steps.target.outputs.date }}"
-          git push
+
+      - name: Fail if snapshot failed
+        if: steps.build.outputs.exit_code != '0'
+        run: exit 1
