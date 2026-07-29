@@ -2,16 +2,20 @@
 """Validation runner for the date-consistent market snapshot."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+import logging
 import time
 
 import pandas as pd
 import requests
+import urllib3
 
 import build_market_snapshot as base
 
 BEIJING = timezone(timedelta(hours=8))
 _ORIGINAL_FETCH_ALL = base.fetch_all_stock_history
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def _date_text(value: object) -> str:
@@ -178,6 +182,57 @@ def fetch_current_close_snapshot(
     return valid, fallback_no_trade, fallback_errors
 
 
+def _fetch_one_sw_component(row: pd.Series) -> list[dict[str, str]]:
+    code = base.normalize_code(row["行业代码"])
+    url = "https://www.swsresearch.com/institute-sw/api/index_publish/details/component_stocks/"
+    params = {"swindexcode": code, "page": "1", "page_size": "10000"}
+    headers = {"User-Agent": base.UA}
+    last_error: Exception | None = None
+    for attempt in range(1, 3):
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=18, verify=False)
+            response.raise_for_status()
+            results = ((response.json().get("data") or {}).get("results") or [])
+            return [
+                {
+                    "股票代码": base.normalize_code(item.get("stockcode")),
+                    "申万一级行业": str(row["上级行业"]).strip(),
+                    "申万二级行业": str(row["行业名称"]).strip(),
+                }
+                for item in results
+                if item.get("stockcode")
+            ]
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.5)
+    raise RuntimeError(f"{code} 成分获取失败: {last_error}")
+
+
+def build_sw_second_mapping_fast() -> pd.DataFrame:
+    """Fetch SW level-2 constituents concurrently with per-request timeouts."""
+    info = base.retry(base.ak.sw_index_second_info)
+    required = {"行业代码", "行业名称", "上级行业"}
+    if info.empty or not required.issubset(info.columns):
+        raise RuntimeError(f"申万二级行业信息异常: {list(info.columns)}")
+
+    records: list[dict[str, str]] = []
+    failures = 0
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = {executor.submit(_fetch_one_sw_component, row.copy()): row for _, row in info.iterrows()}
+        for future in as_completed(futures):
+            row = futures[future]
+            try:
+                records.extend(future.result())
+            except Exception as exc:
+                failures += 1
+                logging.warning("申万二级行业成分失败 %s: %s", row["行业代码"], exc)
+    if not records:
+        raise RuntimeError("申万二级行业映射为空")
+    logging.info("申万二级映射完成：%s 条，失败行业 %s 个", len(records), failures)
+    return pd.DataFrame(records).drop_duplicates("股票代码", keep="first")
+
+
 def skip_sw_in_market_snapshot(target_date: str, workers: int = 6):
     """The dedicated SW workflow supplies the exact-date industry dataset."""
     columns = [
@@ -197,6 +252,7 @@ def skip_sw_in_market_snapshot(target_date: str, workers: int = 6):
 
 base.fetch_stock_universe = fetch_stock_universe_official
 base.fetch_all_stock_history = fetch_current_close_snapshot
+base.build_sw_second_mapping = build_sw_second_mapping_fast
 base.fetch_sw_snapshot = skip_sw_in_market_snapshot
 
 if __name__ == "__main__":
