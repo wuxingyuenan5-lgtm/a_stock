@@ -2,9 +2,15 @@
 """Validation runner for the date-consistent market snapshot."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 
 import build_market_snapshot as base
+
+BEIJING = timezone(timedelta(hours=8))
+_QUOTE_CACHE: list[pd.DataFrame | None] = [None]
+_ORIGINAL_FETCH_ALL = base.fetch_all_stock_history
 
 
 def _date_text(value: object) -> str:
@@ -12,12 +18,21 @@ def _date_text(value: object) -> str:
     return "" if pd.isna(parsed) else parsed.strftime("%Y%m%d")
 
 
+def _spot_snapshot() -> pd.DataFrame:
+    if _QUOTE_CACHE[0] is None:
+        raw = base.retry(base.ak.stock_zh_a_spot_em)
+        required = {"代码", "名称", "最新价", "涨跌幅", "成交额", "总市值", "流通市值"}
+        if raw.empty or not required.issubset(raw.columns):
+            raise RuntimeError(f"全A收盘快照字段异常: {list(raw.columns)}")
+        _QUOTE_CACHE[0] = raw.copy()
+    return _QUOTE_CACHE[0].copy()
+
+
 def fetch_stock_universe_official() -> pd.DataFrame:
     """Build the A-share universe from SSE, SZSE and BSE official lists.
 
-    Exchange lists define codes, names and listing dates. A single all-A quote
-    snapshot is merged only to add total/float market value for the explicit
-    micro-cap fallback; it does not define the stock universe.
+    Exchange lists define codes, names and listing dates. The current all-A
+    quote snapshot only enriches market values for the explicit micro fallback.
     """
     frames: list[pd.DataFrame] = []
 
@@ -46,41 +61,67 @@ def fetch_stock_universe_official() -> pd.DataFrame:
     if len(universe) < 3000:
         raise RuntimeError(f"沪深京官方A股清单异常，仅取得 {len(universe)} 只")
 
-    try:
-        quote = base.retry(base.ak.stock_zh_a_spot_em)
-        market_value = quote[["代码", "总市值", "流通市值"]].copy()
-        market_value.columns = ["股票代码", "总市值", "流通市值"]
-        market_value["股票代码"] = market_value["股票代码"].map(base.normalize_code)
-        market_value["总市值"] = pd.to_numeric(market_value["总市值"], errors="coerce")
-        market_value["流通市值"] = pd.to_numeric(market_value["流通市值"], errors="coerce")
-        universe = universe.merge(market_value.drop_duplicates("股票代码"), on="股票代码", how="left")
-    except Exception:
-        universe["总市值"] = pd.NA
-        universe["流通市值"] = pd.NA
-
-    return universe
+    quote = _spot_snapshot()[["代码", "总市值", "流通市值"]].copy()
+    quote.columns = ["股票代码", "总市值", "流通市值"]
+    quote["股票代码"] = quote["股票代码"].map(base.normalize_code)
+    quote["总市值"] = pd.to_numeric(quote["总市值"], errors="coerce")
+    quote["流通市值"] = pd.to_numeric(quote["流通市值"], errors="coerce")
+    return universe.merge(quote.drop_duplicates("股票代码"), on="股票代码", how="left")
 
 
-def fetch_sw_snapshot_exact_date(target_date: str, workers: int = 6):
-    """Fetch SW data only when the official free source has the target date.
+def fetch_current_close_snapshot(
+    universe: pd.DataFrame, target_date: str, workers: int
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Use one complete post-close snapshot for the current Beijing date.
 
-    A single representative index is checked first. If the source has not
-    published the target date yet, return an explicit missing-data record and
-    never substitute the previous trading day.
+    Historical target dates still fall back to the original per-security daily
+    history implementation.
     """
-    try:
-        probe = base.retry(lambda: base.ak.index_hist_sw(symbol="801010", period="day"))
-        dates = pd.to_datetime(probe.get("日期"), errors="coerce")
-        available = dates.dt.strftime("%Y%m%d").eq(target_date).any()
-    except Exception as exc:
-        available = False
-        probe_error = str(exc)
-    else:
-        probe_error = "目标日尚未发布"
+    today = datetime.now(BEIJING).strftime("%Y%m%d")
+    if target_date != today:
+        return _ORIGINAL_FETCH_ALL(universe, target_date, workers)
 
-    if available:
-        return base.fetch_sw_snapshot(target_date, workers)
+    raw = _spot_snapshot()[["代码", "名称", "最新价", "涨跌幅", "成交额", "总市值", "流通市值"]].copy()
+    raw.columns = ["股票代码", "行情名称", "收盘价", "涨跌幅", "成交额", "行情总市值", "行情流通市值"]
+    raw["股票代码"] = raw["股票代码"].map(base.normalize_code)
+    for column in ("收盘价", "涨跌幅", "成交额", "行情总市值", "行情流通市值"):
+        raw[column] = pd.to_numeric(raw[column], errors="coerce")
+    raw["涨跌幅"] = raw["涨跌幅"] / 100
+    raw = raw.drop_duplicates("股票代码")
 
+    merged = universe.merge(raw, on="股票代码", how="left")
+    valid_mask = (
+        merged["收盘价"].notna()
+        & merged["成交额"].notna()
+        & merged["涨跌幅"].notna()
+        & merged["收盘价"].gt(0)
+        & merged["成交额"].gt(0)
+    )
+    valid = merged[valid_mask].copy()
+    no_trade = merged[~valid_mask][["股票代码", "股票名称"]].copy()
+    no_trade["原因"] = "目标日停牌、无成交或行情缺失"
+
+    valid["日期"] = datetime.strptime(target_date, "%Y%m%d").strftime("%Y-%m-%d")
+    valid["总市值"] = valid["行情总市值"].combine_first(valid["总市值"])
+    valid["流通市值"] = valid["行情流通市值"].combine_first(valid["流通市值"])
+    valid = valid[
+        [
+            "日期", "股票代码", "股票名称", "上市日期", "收盘价",
+            "涨跌幅", "成交额", "总市值", "流通市值",
+        ]
+    ].sort_values("股票代码")
+
+    if len(valid) < 3000:
+        raise RuntimeError(f"统一股票池有效行情异常，仅取得 {len(valid)} 只")
+    return valid, no_trade, pd.DataFrame(columns=["股票代码", "股票名称", "错误"])
+
+
+def skip_sw_in_market_snapshot(target_date: str, workers: int = 6):
+    """SW is produced by the dedicated industry workflow and merged in the report.
+
+    Keeping it out of this snapshot avoids duplicate requests and still enforces
+    exact-date consistency when the final workbook is assembled.
+    """
     columns = [
         "日期", "行业层级", "一级行业", "指数代码", "指数名称",
         "收盘价", "成交额_亿元", "日收益率", "20日年化波动率",
@@ -90,14 +131,15 @@ def fetch_sw_snapshot_exact_date(target_date: str, workers: int = 6):
         {
             "指数代码": "ALL",
             "指数名称": "申万一级/二级行业",
-            "错误": f"官方免费源未提供 {target_date}：{probe_error}；不混用前一交易日数据",
+            "错误": "由独立申万行业流水线生成，最终报告仅合并同一目标日数据",
         }
     ])
     return snapshot, failures
 
 
 base.fetch_stock_universe = fetch_stock_universe_official
-base.fetch_sw_snapshot = fetch_sw_snapshot_exact_date
+base.fetch_all_stock_history = fetch_current_close_snapshot
+base.fetch_sw_snapshot = skip_sw_in_market_snapshot
 
 if __name__ == "__main__":
     base.main()
