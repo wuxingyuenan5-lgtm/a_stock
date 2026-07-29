@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - build_market_snapshot.py
+      - run_market_snapshot_v2.py
       - .github/workflows/build_market_snapshot.yml
       - requirements.txt
       - .snapshot-validation
@@ -18,6 +19,7 @@ on:
       - main
     paths:
       - build_market_snapshot.py
+      - run_market_snapshot_v2.py
       - .github/workflows/build_market_snapshot.yml
       - requirements.txt
 
@@ -45,8 +47,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Validate script
-        run: python -m py_compile build_market_snapshot.py
+      - name: Validate scripts
+        run: python -m py_compile build_market_snapshot.py run_market_snapshot_v2.py
 
       - name: Resolve target date
         id: target
@@ -65,7 +67,7 @@ jobs:
         run: |
           mkdir -p data
           set +e
-          python build_market_snapshot.py --target-date "${{ steps.target.outputs.date }}" --workers 32 2>&1 | tee "data/market_snapshot_run_${{ steps.target.outputs.date }}.log"
+          python run_market_snapshot_v2.py --target-date "${{ steps.target.outputs.date }}" --workers 32 2>&1 | tee "data/market_snapshot_run_${{ steps.target.outputs.date }}.log"
           status=${PIPESTATUS[0]}
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0
