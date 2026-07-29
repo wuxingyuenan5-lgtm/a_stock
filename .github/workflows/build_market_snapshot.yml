@@ -7,6 +7,12 @@ on:
         description: "Trading date in YYYYMMDD"
         required: true
         default: "20260728"
+  pull_request:
+    paths:
+      - build_market_snapshot.py
+      - .github/workflows/build_market_snapshot.yml
+      - requirements.txt
+      - .snapshot-validation
   push:
     branches:
       - main
@@ -75,7 +81,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Commit snapshot files and log
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
