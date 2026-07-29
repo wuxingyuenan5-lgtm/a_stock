@@ -92,15 +92,19 @@ def _parse_tencent_quotes(text: str, target_date: str) -> list[dict[str, object]
         quote_time = values[30] if len(values) > 30 else ""
         if quote_time and not quote_time.startswith(target_date):
             continue
+        pct = num(32)
+        amount_wan = num(37)
+        mcap_yi = num(44)
+        float_mcap_yi = num(45)
         rows.append(
             {
                 "股票代码": base.normalize_code(code),
                 "行情名称": values[1],
                 "收盘价": num(3),
-                "涨跌幅": (num(32) / 100) if num(32) is not None else None,
-                "成交额": (num(37) * 10000) if num(37) is not None else None,
-                "行情总市值": (num(44) * 1e8) if num(44) is not None else None,
-                "行情流通市值": (num(45) * 1e8) if num(45) is not None else None,
+                "涨跌幅": pct / 100 if pct is not None else None,
+                "成交额": amount_wan * 10000 if amount_wan is not None else None,
+                "行情总市值": mcap_yi * 1e8 if mcap_yi is not None else None,
+                "行情流通市值": float_mcap_yi * 1e8 if float_mcap_yi is not None else None,
                 "行情时间": quote_time,
             }
         )
@@ -148,9 +152,13 @@ def fetch_current_close_snapshot(
     fallback_no_trade = pd.DataFrame(columns=["股票代码", "股票名称", "原因"])
     fallback_errors = pd.DataFrame(columns=["股票代码", "股票名称", "错误"])
     if not missing.empty:
-        fallback_data, fallback_no_trade, fallback_errors = _ORIGINAL_FETCH_ALL(
-            missing, target_date, min(workers, 16)
-        )
+        try:
+            fallback_data, fallback_no_trade, fallback_errors = _ORIGINAL_FETCH_ALL(
+                missing, target_date, min(workers, 16)
+            )
+        except RuntimeError as exc:
+            fallback_errors = missing[["股票代码", "股票名称"]].copy()
+            fallback_errors["错误"] = f"腾讯快照缺失且历史接口未回补：{exc}"
 
     valid["日期"] = datetime.strptime(target_date, "%Y%m%d").strftime("%Y-%m-%d")
     valid["总市值"] = valid["行情总市值"].combine_first(valid["总市值"])
