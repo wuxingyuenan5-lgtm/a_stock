@@ -67,7 +67,24 @@ def fetch_stock_universe_complete() -> pd.DataFrame:
     return frame
 
 
+def skip_unavailable_official_sw(target_date: str, workers: int = 6):
+    columns = [
+        "日期", "行业层级", "一级行业", "指数代码", "指数名称",
+        "收盘价", "成交额_亿元", "日收益率", "20日年化波动率",
+    ]
+    snapshot = pd.DataFrame(columns=columns)
+    failures = pd.DataFrame([
+        {
+            "指数代码": "ALL",
+            "指数名称": "申万一级/二级行业",
+            "错误": f"官方免费源尚未发布 {target_date}；审核版不混用前一交易日数据",
+        }
+    ])
+    return snapshot, failures
+
+
 base.fetch_stock_universe = fetch_stock_universe_complete
+base.fetch_sw_snapshot = skip_unavailable_official_sw
 
 if __name__ == "__main__":
     base.main()
