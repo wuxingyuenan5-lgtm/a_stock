@@ -1,0 +1,76 @@
+name: Build A-share Market Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "Trading date in YYYYMMDD"
+        required: true
+        default: "20260728"
+  push:
+    branches:
+      - main
+    paths:
+      - build_market_snapshot.py
+      - .github/workflows/build_market_snapshot.yml
+      - requirements.txt
+
+concurrency:
+  group: market-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate script
+        run: python -m py_compile build_market_snapshot.py
+
+      - name: Resolve target date
+        id: target
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "date=${{ inputs.target_date }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "date=20260728" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build snapshot
+        run: python build_market_snapshot.py --target-date "${{ steps.target.outputs.date }}" --workers 24
+
+      - name: Upload generated CSV files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-snapshot-${{ steps.target.outputs.date }}
+          path: data/*${{ steps.target.outputs.date }}.csv
+          if-no-files-found: warn
+
+      - name: Commit snapshot files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          if git diff --cached --quiet; then
+            echo "No data changes"
+            exit 0
+          fi
+          git commit -m "data: build A-share snapshot ${{ steps.target.outputs.date }}"
+          git push
