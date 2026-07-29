@@ -2,6 +2,7 @@ name: Update Shenwan Industry Data
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches:
       - main
@@ -40,7 +41,16 @@ jobs:
       - name: Update industry data
         run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20
 
+      - name: Upload generated CSV files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sw-industry-data
+          path: data/*.csv
+          if-no-files-found: warn
+
       - name: Commit updated CSV files
+        if: github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
