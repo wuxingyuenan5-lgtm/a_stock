@@ -12,8 +12,8 @@ on:
       - .github/workflows/update_sw_industry.yml
 
 concurrency:
-  group: sw-industry-update
-  cancel-in-progress: false
+  group: sw-industry-update-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   update:
