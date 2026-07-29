@@ -2,8 +2,6 @@ name: Update Shenwan Industry Data
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "30 8 * * 1-5"
   push:
     branches:
       - main
