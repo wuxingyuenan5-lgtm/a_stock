@@ -1,0 +1,55 @@
+name: Update Shenwan Industry Data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 8 * * 1-5"
+  push:
+    branches:
+      - main
+    paths:
+      - update_sw_industry.py
+      - requirements.txt
+      - .github/workflows/update_sw_industry.yml
+
+concurrency:
+  group: sw-industry-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate script
+        run: python -m py_compile update_sw_industry.py
+
+      - name: Update industry data
+        run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20
+
+      - name: Commit updated CSV files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          if git diff --cached --quiet; then
+            echo "No data changes"
+            exit 0
+          fi
+          git commit -m "data: update Shenwan industry tracker"
+          git push
