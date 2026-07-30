@@ -6,7 +6,7 @@ on:
       target_date:
         description: "Trading date in YYYYMMDD"
         required: true
-        default: "20260729"
+        default: "20260730"
   pull_request:
     paths:
       - build_market_snapshot.py
@@ -14,6 +14,7 @@ on:
       - run_market_snapshot_v3.py
       - run_market_snapshot_v4.py
       - run_market_snapshot_v5.py
+      - run_market_snapshot_v6.py
       - .github/workflows/build_market_snapshot.yml
       - requirements.txt
       - .snapshot-validation
@@ -26,6 +27,7 @@ on:
       - run_market_snapshot_v3.py
       - run_market_snapshot_v4.py
       - run_market_snapshot_v5.py
+      - run_market_snapshot_v6.py
       - .github/workflows/build_market_snapshot.yml
       - requirements.txt
 
@@ -54,7 +56,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Validate scripts
-        run: python -m py_compile build_market_snapshot.py run_market_snapshot_v2.py run_market_snapshot_v3.py run_market_snapshot_v4.py run_market_snapshot_v5.py
+        run: python -m py_compile build_market_snapshot.py run_market_snapshot_v2.py run_market_snapshot_v3.py run_market_snapshot_v4.py run_market_snapshot_v5.py run_market_snapshot_v6.py
 
       - name: Resolve target date
         id: target
@@ -63,7 +65,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "date=${{ inputs.target_date }}" >> "$GITHUB_OUTPUT"
           else
-            echo "date=20260729" >> "$GITHUB_OUTPUT"
+            echo "date=20260730" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build snapshot
@@ -73,7 +75,7 @@ jobs:
         run: |
           mkdir -p data
           set +e
-          python run_market_snapshot_v5.py --target-date "${{ steps.target.outputs.date }}" --workers 32 2>&1 | tee "data/market_snapshot_run_${{ steps.target.outputs.date }}.log"
+          python run_market_snapshot_v6.py --target-date "${{ steps.target.outputs.date }}" --workers 32 2>&1 | tee "data/market_snapshot_run_${{ steps.target.outputs.date }}.log"
           status=${PIPESTATUS[0]}
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0
@@ -85,6 +87,7 @@ jobs:
           name: market-snapshot-${{ steps.target.outputs.date }}
           path: |
             data/*${{ steps.target.outputs.date }}.csv
+            data/market_daily_history.csv
             data/market_snapshot_run_${{ steps.target.outputs.date }}.log
           if-no-files-found: warn
 
