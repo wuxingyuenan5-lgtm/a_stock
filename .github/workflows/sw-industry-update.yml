@@ -1,9 +1,7 @@
 name: Update Shenwan industry data
 
 on:
-  push:
-    paths:
-      - '.github/workflows/sw-industry-update.yml'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -16,6 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
@@ -35,4 +34,4 @@ jobs:
           git add data/sw_industry_history.csv data/sw_industry_latest.csv
           if [ -f data/sw_industry_failures.csv ]; then git add data/sw_industry_failures.csv; else git rm --ignore-unmatch data/sw_industry_failures.csv; fi
           git commit -m "data: update Shenwan industry indices"
-          git push
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
