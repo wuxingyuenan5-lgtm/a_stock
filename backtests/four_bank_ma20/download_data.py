@@ -175,7 +175,7 @@ def tencent_rows(
     count: int,
 ) -> list[list[str]]:
     params = {
-        "param": f"{tencent_symbol},day,{start_date},{end_date},{count}",
+        "param": f"{tencent_symbol},day,{start_date},{end_date},{count},",
         "r": str(time.time_ns()),
     }
     payload = request_json(
