@@ -1,0 +1,63 @@
+name: Download Four-Bank MA20 Data
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - data/four-bank-ma20-backtest
+    paths:
+      - backtests/four_bank_ma20/download_data.py
+      - backtests/four_bank_ma20/README.md
+      - requirements.txt
+      - .github/workflows/download_four_bank_ma20_data.yml
+
+concurrency:
+  group: four-bank-ma20-data-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate downloader
+        run: python -m py_compile backtests/four_bank_ma20/download_data.py
+
+      - name: Download prices and corporate actions
+        run: python backtests/four_bank_ma20/download_data.py --start-date 2011-01-01
+
+      - name: Upload generated dataset
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: four-bank-ma20-data
+          path: data/four_bank_ma20/
+          if-no-files-found: warn
+
+      - name: Commit generated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/four_bank_ma20
+          if git diff --cached --quiet; then
+            echo "No data changes"
+            exit 0
+          fi
+          git commit -m "data: update four-bank MA20 dataset"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
