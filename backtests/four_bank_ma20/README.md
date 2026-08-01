@@ -20,14 +20,14 @@
 
 默认下载区间从 `2011-01-01` 至运行当日。
 
-## 数据源与降级规则
+## 数据源
 
-主数据源为 BaoStock：
+使用 BaoStock：
 
 - `query_history_k_data_plus(..., frequency="d", adjustflag="3")`：不复权日线；
 - `query_dividend_data(..., yearType="operate")`：按除权除息年度查询公司行为。
 
-若某项 BaoStock 请求失败，脚本仅对该项降级使用 AKShare，并在每行的 `source` 字段及 `manifest.json` 中明确记录，不会静默混用。
+所有输出行均保留 `source=baostock`。下载失败时工作流直接报错，不会静默使用其他数据源替换。
 
 ## 输出文件
 
@@ -37,7 +37,7 @@
 - `corporate_actions.csv`：四只银行股的现金分红、送股、转增及相关日期；
 - `open_prices_wide.csv`：开盘价宽表，便于回测撮合；
 - `close_prices_wide.csv`：收盘价宽表，便于信号和每日估值；
-- `manifest.json`：生成时间、数据区间、行数、各标的实际数据源。
+- `manifest.json`：生成时间、数据区间、行数和各标的覆盖范围。
 
 CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 
@@ -56,6 +56,7 @@ CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 
 `corporate_actions.csv`：
 
+- `event_year`：除权除息事件所属年份；
 - `record_date`：股权登记日；
 - `ex_date`：除权除息日；
 - `payment_date`：派息日；
@@ -63,7 +64,7 @@ CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 - `stock_dividend_per_share`：每股送股数量；
 - `capitalisation_issue_per_share`：每股转增数量。
 
-回测时不应使用前复权价格下单。正确处理方式是：持仓跨越权益登记条件时，在相应公司行为日期增加现金或调整持股数量。
+回测时不应使用前复权价格下单。正确处理方式是：使用不复权开盘价撮合，并依据公司行为记录增加现金或调整持股数量。
 
 ## 本地运行
 
