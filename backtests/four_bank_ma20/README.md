@@ -22,11 +22,11 @@
 
 ## 数据源
 
-行情数据直接通过东方财富公开 HTTPS 日线接口获取，参数 `fqt=0`，即不复权价格。固定使用已知的上海市场 `secid`，避免先调用全市场代码映射接口。
+行情数据优先通过腾讯证券公开 HTTPS 日线接口获取，使用未复权的 `day` 数据；若腾讯请求失败，再降级到东方财富公开 HTTPS 日线接口，并明确指定 `fqt=0`。每个标的的实际数据源会写入 `source` 字段及 `manifest.json`。
 
 公司行为通过 AKShare 的 `stock_fhps_detail_em()` 获取，其底层为东方财富分红送配详情数据。接口返回的现金分红、送股和转股比例按每 10 股口径转换为每股口径。
 
-下载失败时工作流直接报错，不会静默使用调整价或其他数据覆盖。
+下载失败时工作流直接报错，不会静默使用调整价覆盖原始价格。
 
 ## 输出文件
 
@@ -36,7 +36,7 @@
 - `corporate_actions.csv`：四只银行股的现金分红、送股、转增及相关日期；
 - `open_prices_wide.csv`：开盘价宽表，便于回测撮合；
 - `close_prices_wide.csv`：收盘价宽表，便于信号和每日估值；
-- `manifest.json`：生成时间、数据区间、行数和各标的覆盖范围。
+- `manifest.json`：生成时间、数据区间、行数、各标的覆盖范围及实际数据源。
 
 CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 
@@ -48,7 +48,7 @@ CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 - `code`：标准代码；
 - `open/high/low/close/preclose`：不复权价格；
 - `volume_raw`：数据源原始成交量字段，不自行改变单位；
-- `amount`：成交额；
+- `amount`：成交额；腾讯历史接口不提供时保留为空；
 - `amplitude_pct`、`pct_change_pct`、`turnover_pct`：百分比口径字段；
 - `trade_status`：返回日均记为可交易日；
 - `source`：实际数据源。
