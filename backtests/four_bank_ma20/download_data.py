@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Download auditable daily data for the four-bank MA20 portfolio backtest.
+"""Download data for the four-bank MA20 portfolio backtest.
 
-The downloader uses unadjusted prices. Tencent's HTTPS daily-kline endpoint is
-primary; Eastmoney's HTTPS endpoint is retained as a fallback. Corporate actions
-are fetched through AKShare's Eastmoney-backed stock_fhps_detail_em interface and
-stored separately for explicit accounting by the backtest engine.
+Execution and valuation prices are unadjusted. Price history is downloaded from
+Tencent in bounded two-year chunks. Corporate actions are downloaded separately
+through AKShare so the backtest can account for dividends and share distributions
+explicitly.
 """
 
 from __future__ import annotations
@@ -23,48 +23,37 @@ import requests
 
 DATA_DIR = Path("data/four_bank_ma20")
 DEFAULT_START_DATE = "2011-01-01"
-MAX_SOURCE_STALENESS_DAYS = 20
 MIN_EXPECTED_ROWS = 1000
-
-TENCENT_PRICE_ENDPOINT = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-EASTMONEY_PRICE_ENDPOINTS = [
-    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://33.push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://63.push2his.eastmoney.com/api/qt/stock/kline/get",
-]
+MAX_SOURCE_STALENESS_DAYS = 20
+TENCENT_ENDPOINT = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
 SECURITIES: dict[str, dict[str, str]] = {
     "sh.000001": {
-        "tencent_symbol": "sh000001",
-        "eastmoney_secid": "1.000001",
+        "provider_symbol": "sh000001",
         "symbol": "000001",
         "name": "上证指数",
         "asset_type": "index",
     },
     "sh.601988": {
-        "tencent_symbol": "sh601988",
-        "eastmoney_secid": "1.601988",
+        "provider_symbol": "sh601988",
         "symbol": "601988",
         "name": "中国银行",
         "asset_type": "stock",
     },
     "sh.601398": {
-        "tencent_symbol": "sh601398",
-        "eastmoney_secid": "1.601398",
+        "provider_symbol": "sh601398",
         "symbol": "601398",
         "name": "工商银行",
         "asset_type": "stock",
     },
     "sh.601939": {
-        "tencent_symbol": "sh601939",
-        "eastmoney_secid": "1.601939",
+        "provider_symbol": "sh601939",
         "symbol": "601939",
         "name": "建设银行",
         "asset_type": "stock",
     },
     "sh.601288": {
-        "tencent_symbol": "sh601288",
-        "eastmoney_secid": "1.601288",
+        "provider_symbol": "sh601288",
         "symbol": "601288",
         "name": "农业银行",
         "asset_type": "stock",
@@ -117,12 +106,12 @@ CORPORATE_ACTION_COLUMNS = [
 T = TypeVar("T")
 
 
-def retry(call: Callable[[], T], attempts: int = 4, delay: float = 1.0) -> T:
+def retry(call: Callable[[], T], attempts: int = 4, delay: float = 1.5) -> T:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
             return call()
-        except Exception as exc:  # noqa: BLE001 - preserve upstream errors
+        except Exception as exc:  # noqa: BLE001
             last_error = exc
             if attempt == attempts:
                 break
@@ -136,109 +125,85 @@ def parse_iso_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def compact_date(value: str) -> str:
-    return value.replace("-", "")
-
-
 def column_or_na(frame: pd.DataFrame, column: str) -> pd.Series:
     if column in frame.columns:
         return frame[column]
     return pd.Series(pd.NA, index=frame.index, dtype="object")
 
 
-def request_json(
-    url: str,
-    params: dict[str, str],
-    referer: str,
-    timeout: tuple[int, int] = (10, 45),
-) -> dict[str, object]:
+def request_tencent_chunk(
+    provider_symbol: str,
+    start_date: date,
+    end_date: date,
+) -> list[list[str]]:
+    params = {
+        "param": (
+            f"{provider_symbol},day,{start_date.isoformat()},"
+            f"{end_date.isoformat()},640,"
+        ),
+        "r": f"0.{time.time_ns()}",
+    }
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"
         ),
-        "Referer": referer,
+        "Referer": "https://gu.qq.com/",
         "Accept": "application/json,text/plain,*/*",
     }
-    response = requests.get(url, params=params, headers=headers, timeout=timeout)
+    response = requests.get(
+        TENCENT_ENDPOINT,
+        params=params,
+        headers=headers,
+        timeout=(10, 45),
+    )
     response.raise_for_status()
     payload = response.json()
-    if not isinstance(payload, dict):
-        raise RuntimeError("接口未返回JSON对象")
-    return payload
-
-
-def tencent_rows(
-    tencent_symbol: str,
-    start_date: str,
-    end_date: str,
-    count: int,
-) -> list[list[str]]:
-    params = {
-        "param": f"{tencent_symbol},day,{start_date},{end_date},{count},",
-        "r": str(time.time_ns()),
-    }
-    payload = request_json(
-        TENCENT_PRICE_ENDPOINT,
-        params,
-        referer="https://gu.qq.com/",
-    )
     if payload.get("code") != 0:
         raise RuntimeError(f"腾讯行情接口错误: {payload.get('code')} {payload.get('msg')}")
+
     data = payload.get("data")
-    security_data = data.get(tencent_symbol) if isinstance(data, dict) else None
+    security_data = data.get(provider_symbol) if isinstance(data, dict) else None
     rows = security_data.get("day") if isinstance(security_data, dict) else None
     if not rows:
-        raise RuntimeError(f"腾讯行情返回空数据: {tencent_symbol}")
+        keys = sorted(security_data.keys()) if isinstance(security_data, dict) else []
+        raise RuntimeError(
+            f"腾讯行情返回空数据: {provider_symbol} "
+            f"{start_date}~{end_date}; keys={keys}"
+        )
     return [[str(value) for value in row] for row in rows]
 
 
-def fetch_tencent_rows(tencent_symbol: str, start_date: str, end_date: str) -> list[list[str]]:
-    full_rows = retry(
-        lambda: tencent_rows(tencent_symbol, start_date, end_date, 6400),
-        attempts=3,
-        delay=1.5,
-    )
-    if len(full_rows) >= MIN_EXPECTED_ROWS:
-        return full_rows
-
-    logging.info(
-        "腾讯单次返回 %s 行，改为按两年区间分段下载: %s",
-        len(full_rows),
-        tencent_symbol,
-    )
+def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    metadata = SECURITIES[code]
     start = parse_iso_date(start_date)
     end = parse_iso_date(end_date)
-    chunk_rows: list[list[str]] = []
+    all_rows: list[list[str]] = []
+
     chunk_start_year = start.year
     while chunk_start_year <= end.year:
         chunk_start = max(start, date(chunk_start_year, 1, 1))
         chunk_end = min(end, date(chunk_start_year + 1, 12, 31))
-        rows = retry(
-            lambda chunk_start=chunk_start, chunk_end=chunk_end: tencent_rows(
-                tencent_symbol,
-                chunk_start.isoformat(),
-                chunk_end.isoformat(),
-                640,
-            ),
-            attempts=3,
-            delay=1.5,
+        logging.info(
+            "下载 %s: %s ~ %s",
+            metadata["name"],
+            chunk_start,
+            chunk_end,
         )
-        chunk_rows.extend(rows)
+        rows = retry(
+            lambda chunk_start=chunk_start, chunk_end=chunk_end: request_tencent_chunk(
+                metadata["provider_symbol"],
+                chunk_start,
+                chunk_end,
+            )
+        )
+        all_rows.extend(rows)
         chunk_start_year += 2
-        time.sleep(0.4)
-    return chunk_rows
+        time.sleep(0.5)
 
-
-def normalize_tencent_price(
-    rows: list[list[str]],
-    code: str,
-    start_date: str,
-    end_date: str,
-) -> pd.DataFrame:
-    parsed_rows = [row[:6] for row in rows if len(row) >= 6]
+    parsed_rows = [row[:6] for row in all_rows if len(row) >= 6]
     if not parsed_rows:
-        raise ValueError(f"{code} 腾讯行情字段为空")
+        raise ValueError(f"{code} 没有可解析的行情记录")
 
     frame = pd.DataFrame(
         parsed_rows,
@@ -246,6 +211,7 @@ def normalize_tencent_price(
     )
     for column in ["open", "close", "high", "low", "volume_raw"]:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date", "open", "high", "low", "close"])
     frame = frame[
@@ -265,7 +231,6 @@ def normalize_tencent_price(
     frame["turnover_pct"] = pd.NA
     frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
 
-    metadata = SECURITIES[code]
     frame["code"] = code
     frame["symbol"] = metadata["symbol"]
     frame["name"] = metadata["name"]
@@ -277,103 +242,10 @@ def normalize_tencent_price(
     return frame[PRICE_COLUMNS].reset_index(drop=True)
 
 
-def request_eastmoney_payload(secid: str, start_date: str, end_date: str) -> dict[str, object]:
-    params = {
-        "fields1": "f1,f2,f3,f4,f5,f6",
-        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "ut": "7eea3edcaed734bea9cbfc24409ed989",
-        "klt": "101",
-        "fqt": "0",
-        "secid": secid,
-        "beg": compact_date(start_date),
-        "end": compact_date(end_date),
-        "lmt": "1000000",
-    }
-    errors: list[str] = []
-    for endpoint in EASTMONEY_PRICE_ENDPOINTS:
-        try:
-            payload = request_json(
-                endpoint,
-                params,
-                referer="https://quote.eastmoney.com/",
-            )
-            data = payload.get("data")
-            klines = data.get("klines") if isinstance(data, dict) else None
-            if not klines:
-                raise RuntimeError(f"接口返回空行情: {payload.get('rc')}")
-            return payload
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{endpoint}: {exc}")
-            time.sleep(0.8)
-    raise RuntimeError("；".join(errors))
-
-
-def normalize_eastmoney_price(payload: dict[str, object], code: str) -> pd.DataFrame:
-    data = payload["data"]
-    rows = [str(item).split(",") for item in data["klines"]]
-    expected_columns = [
-        "date",
-        "open",
-        "close",
-        "high",
-        "low",
-        "volume_raw",
-        "amount",
-        "amplitude_pct",
-        "pct_change_pct",
-        "change",
-        "turnover_pct",
-    ]
-    if any(len(row) != len(expected_columns) for row in rows):
-        raise ValueError(f"{code} 东方财富行情字段数量异常")
-
-    frame = pd.DataFrame(rows, columns=expected_columns)
-    numeric_columns = [column for column in expected_columns if column != "date"]
-    for column in numeric_columns:
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
-    frame = frame.dropna(subset=["date", "open", "high", "low", "close"])
-    frame.sort_values("date", inplace=True)
-    frame["preclose"] = frame["close"].shift(1)
-    frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
-
-    metadata = SECURITIES[code]
-    frame["code"] = code
-    frame["symbol"] = metadata["symbol"]
-    frame["name"] = metadata["name"]
-    frame["asset_type"] = metadata["asset_type"]
-    frame["trade_status"] = 1
-    frame["is_st"] = 0
-    frame["adjustment"] = "unadjusted"
-    frame["source"] = "eastmoney_https_fallback"
-    return frame[PRICE_COLUMNS].reset_index(drop=True)
-
-
-def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
-    metadata = SECURITIES[code]
-    try:
-        rows = fetch_tencent_rows(metadata["tencent_symbol"], start_date, end_date)
-        frame = normalize_tencent_price(rows, code, start_date, end_date)
-        if len(frame) < MIN_EXPECTED_ROWS:
-            raise ValueError(f"腾讯行情仅返回 {len(frame)} 行")
-        return frame
-    except Exception as exc:  # noqa: BLE001
-        logging.warning("腾讯行情失败，改用东方财富: %s %s", code, exc)
-
-    payload = retry(
-        lambda: request_eastmoney_payload(
-            metadata["eastmoney_secid"], start_date, end_date
-        ),
-        attempts=4,
-        delay=3.0,
-    )
-    return normalize_eastmoney_price(payload, code)
-
-
 def fetch_all_prices(start_date: str, end_date: str) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for code, metadata in SECURITIES.items():
-        logging.info("下载日线行情: %s %s", code, metadata["name"])
+        logging.info("开始下载日线行情: %s %s", code, metadata["name"])
         frames.append(fetch_price(code, start_date, end_date))
         time.sleep(1.0)
     return pd.concat(frames, ignore_index=True).sort_values(["date", "code"])
@@ -414,7 +286,7 @@ def fetch_corporate_actions(code: str) -> pd.DataFrame:
     output["plan_description"] = column_or_na(raw, "现金分红-现金分红比例描述")
     output["source"] = "akshare_eastmoney"
 
-    date_columns = [
+    for column in [
         "report_date",
         "pre_notice_date",
         "implementation_announcement_date",
@@ -422,8 +294,7 @@ def fetch_corporate_actions(code: str) -> pd.DataFrame:
         "ex_date",
         "payment_date",
         "stock_listing_date",
-    ]
-    for column in date_columns:
+    ]:
         values = pd.to_datetime(output[column], errors="coerce")
         output[column] = values.dt.strftime("%Y-%m-%d")
 
@@ -449,8 +320,6 @@ def fetch_all_corporate_actions(start_date: str, end_date: str) -> pd.DataFrame:
         frames.append(fetch_corporate_actions(code))
         time.sleep(1.0)
 
-    if not frames:
-        return pd.DataFrame(columns=CORPORATE_ACTION_COLUMNS)
     output = pd.concat(frames, ignore_index=True)
     return output[(output["ex_date"] >= start_date) & (output["ex_date"] <= end_date)].copy()
 
@@ -489,14 +358,14 @@ def validate_prices(prices: pd.DataFrame, end_date: str) -> None:
 def validate_corporate_actions(corporate_actions: pd.DataFrame) -> None:
     if corporate_actions.empty:
         raise ValueError("四只银行股均未获取到公司行为数据")
-    expected_codes = {
+    expected = {
         code
         for code, metadata in SECURITIES.items()
         if metadata["asset_type"] == "stock"
     }
-    missing_codes = expected_codes - set(corporate_actions["code"].unique())
-    if missing_codes:
-        raise ValueError(f"公司行为缺少标的: {sorted(missing_codes)}")
+    missing = expected - set(corporate_actions["code"].unique())
+    if missing:
+        raise ValueError(f"公司行为缺少标的: {sorted(missing)}")
 
 
 def write_outputs(
@@ -531,10 +400,10 @@ def write_outputs(
         float_format="%.8f",
     )
 
-    securities_manifest: list[dict[str, object]] = []
+    security_summary: list[dict[str, object]] = []
     for code, metadata in SECURITIES.items():
         subset = prices[prices["code"] == code]
-        securities_manifest.append(
+        security_summary.append(
             {
                 "code": code,
                 "symbol": metadata["symbol"],
@@ -543,7 +412,7 @@ def write_outputs(
                 "rows": int(len(subset)),
                 "first_date": str(subset["date"].min()),
                 "last_date": str(subset["date"].max()),
-                "source": sorted(subset["source"].dropna().astype(str).unique().tolist()),
+                "source": "tencent_https",
             }
         )
 
@@ -552,14 +421,14 @@ def write_outputs(
         "requested_start_date": start_date,
         "requested_end_date": end_date,
         "price_adjustment": "unadjusted",
-        "price_source_priority": ["Tencent HTTPS", "Eastmoney HTTPS fallback"],
+        "price_source": "Tencent public HTTPS daily kline",
         "corporate_action_source": "AKShare stock_fhps_detail_em (Eastmoney)",
         "corporate_action_policy": (
             "Apply cash and share distributions explicitly in the backtest account."
         ),
         "price_rows": int(len(prices)),
         "corporate_action_rows": int(len(corporate_actions)),
-        "securities": securities_manifest,
+        "securities": security_summary,
         "files": [
             prices_path.name,
             actions_path.name,
