@@ -1,0 +1,75 @@
+{
+  "generated_at_utc": "2026-08-01T17:24:53.943217+00:00",
+  "requested_start_date": "2011-01-01",
+  "requested_end_date": "2026-08-01",
+  "price_adjustment": "unadjusted",
+  "price_source": "Tencent public HTTPS daily kline",
+  "corporate_action_source": "AKShare stock_fhps_detail_em (Eastmoney)",
+  "corporate_action_policy": "Apply cash and share distributions explicitly in the backtest account.",
+  "price_rows": 18899,
+  "corporate_action_rows": 72,
+  "ohlc_repaired_rows": 1,
+  "securities": [
+    {
+      "code": "sh.000001",
+      "symbol": "000001",
+      "name": "上证指数",
+      "asset_type": "index",
+      "rows": 3783,
+      "first_date": "2011-01-04",
+      "last_date": "2026-07-31",
+      "ohlc_repaired_rows": 1,
+      "source": "tencent_https"
+    },
+    {
+      "code": "sh.601988",
+      "symbol": "601988",
+      "name": "中国银行",
+      "asset_type": "stock",
+      "rows": 3779,
+      "first_date": "2011-01-04",
+      "last_date": "2026-07-31",
+      "ohlc_repaired_rows": 0,
+      "source": "tencent_https"
+    },
+    {
+      "code": "sh.601398",
+      "symbol": "601398",
+      "name": "工商银行",
+      "asset_type": "stock",
+      "rows": 3779,
+      "first_date": "2011-01-04",
+      "last_date": "2026-07-31",
+      "ohlc_repaired_rows": 0,
+      "source": "tencent_https"
+    },
+    {
+      "code": "sh.601939",
+      "symbol": "601939",
+      "name": "建设银行",
+      "asset_type": "stock",
+      "rows": 3779,
+      "first_date": "2011-01-04",
+      "last_date": "2026-07-31",
+      "ohlc_repaired_rows": 0,
+      "source": "tencent_https"
+    },
+    {
+      "code": "sh.601288",
+      "symbol": "601288",
+      "name": "农业银行",
+      "asset_type": "stock",
+      "rows": 3779,
+      "first_date": "2011-01-04",
+      "last_date": "2026-07-31",
+      "ohlc_repaired_rows": 0,
+      "source": "tencent_https"
+    }
+  ],
+  "files": [
+    "daily_prices_unadjusted.csv",
+    "corporate_actions.csv",
+    "open_prices_wide.csv",
+    "close_prices_wide.csv"
+  ]
+}
