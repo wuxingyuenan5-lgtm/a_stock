@@ -22,11 +22,9 @@
 
 ## 数据源
 
-行情数据优先通过腾讯证券公开 HTTPS 日线接口获取，使用未复权的 `day` 数据；若腾讯请求失败，再降级到东方财富公开 HTTPS 日线接口，并明确指定 `fqt=0`。每个标的的实际数据源会写入 `source` 字段及 `manifest.json`。
+行情数据通过腾讯证券公开 HTTPS 日线接口分段获取，使用未复权的 `day` 数据。公司行为通过 AKShare 的 `stock_fhps_detail_em()` 获取，其底层为东方财富分红送配详情数据。现金分红、送股和转股比例由每 10 股口径转换为每股口径。
 
-公司行为通过 AKShare 的 `stock_fhps_detail_em()` 获取，其底层为东方财富分红送配详情数据。接口返回的现金分红、送股和转股比例按每 10 股口径转换为每股口径。
-
-下载失败时工作流直接报错，不会静默使用调整价覆盖原始价格。
+下载失败时工作流直接报错，不会静默使用复权价格或其他口径覆盖。
 
 ## 输出文件
 
@@ -36,24 +34,35 @@
 - `corporate_actions.csv`：四只银行股的现金分红、送股、转增及相关日期；
 - `open_prices_wide.csv`：开盘价宽表，便于回测撮合；
 - `close_prices_wide.csv`：收盘价宽表，便于信号和每日估值；
-- `manifest.json`：生成时间、数据区间、行数、各标的覆盖范围及实际数据源。
+- `manifest.json`：生成时间、覆盖区间、行数、质量修复数量和数据源。
 
 CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 
-## 核心字段
+## 行情字段与质量处理
 
-`daily_prices_unadjusted.csv`：
+`daily_prices_unadjusted.csv` 的主要字段：
 
 - `date`：交易日；
-- `code`：标准代码；
 - `open/high/low/close/preclose`：不复权价格；
+- `high_raw/low_raw`：数据源原始最高价和最低价；
+- `quality_flag`：数据质量标记；
 - `volume_raw`：数据源原始成交量字段，不自行改变单位；
-- `amount`：成交额；腾讯历史接口不提供时保留为空；
-- `amplitude_pct`、`pct_change_pct`、`turnover_pct`：百分比口径字段；
-- `trade_status`：返回日均记为可交易日；
+- `amount`：腾讯历史接口未提供时为空；
+- `amplitude_pct/pct_change_pct/turnover_pct`：百分比口径字段；
 - `source`：实际数据源。
 
-`corporate_actions.csv`：
+少数源数据可能出现最高价或最低价不包络开盘价、收盘价的异常。脚本不会静默删除交易日，而是：
+
+1. 在 `high_raw/low_raw` 中保留原始值；
+2. 将可用 `high/low` 修复为 `open、close、high_raw、low_raw` 的最大值和最小值；
+3. 将该行标记为 `quality_flag=ohlc_bounds_repaired`；
+4. 若全样本修复行数超过 10 行，则停止生成数据。
+
+当前策略信号和成交只依赖收盘价、开盘价，因此该处理既保留交易日和实际使用字段，也保留完整审计痕迹。
+
+## 公司行为字段
+
+`corporate_actions.csv` 的主要字段：
 
 - `report_date`：分红方案对应报告期；
 - `record_date`：股权登记日；
@@ -61,9 +70,9 @@ CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
 - `cash_before_tax_per_share`：每股税前现金股利；
 - `stock_dividend_per_share`：每股送股数量；
 - `capitalisation_issue_per_share`：每股转增数量；
-- `plan_status`、`plan_description`：方案状态和原始描述。
+- `plan_status/plan_description`：方案状态和原始描述。
 
-东方财富详情接口没有稳定提供实际派息到账日，因此 `payment_date` 暂为空。回测引擎应在除权除息日同步计入应收股利，避免不复权价格除息下跌造成虚假损失。
+东方财富详情接口没有稳定提供实际派息到账日，因此 `payment_date` 暂为空。回测引擎应在除权除息日计入应收股利，避免不复权价格除息下跌造成虚假损失。
 
 ## 本地运行
 
@@ -86,6 +95,7 @@ python backtests/four_bank_ma20/download_data.py \
 
 - `date + code` 是否重复；
 - OHLC 关系是否有效；
+- OHLC 修复记录是否超过阈值；
 - 每个标的历史行数是否明显不足；
 - 最新交易日是否与请求截止日相距过久；
 - 四只银行股是否均有公司行为记录。
