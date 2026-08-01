@@ -5,6 +5,10 @@ Execution and valuation prices are unadjusted. Price history is downloaded from
 Tencent in bounded two-year chunks. Corporate actions are downloaded separately
 through AKShare so the backtest can account for dividends and share distributions
 explicitly.
+
+A small number of source rows can violate basic OHLC bounds. The raw high/low are
+preserved and the usable high/low are deterministically repaired to the extrema of
+open, close, raw high and raw low. Every repaired row is explicitly flagged.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ DATA_DIR = Path("data/four_bank_ma20")
 DEFAULT_START_DATE = "2011-01-01"
 MIN_EXPECTED_ROWS = 1000
 MAX_SOURCE_STALENESS_DAYS = 20
+MAX_REPAIRED_OHLC_ROWS = 10
 TENCENT_ENDPOINT = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
 SECURITIES: dict[str, dict[str, str]] = {
@@ -70,6 +75,9 @@ PRICE_COLUMNS = [
     "high",
     "low",
     "close",
+    "high_raw",
+    "low_raw",
+    "quality_flag",
     "preclose",
     "volume_raw",
     "amount",
@@ -221,6 +229,28 @@ def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
     frame.sort_values("date", inplace=True)
     frame.drop_duplicates("date", keep="last", inplace=True)
 
+    frame["high_raw"] = frame["high"]
+    frame["low_raw"] = frame["low"]
+    frame["quality_flag"] = ""
+
+    invalid_bounds = (
+        (frame["high"] < frame[["open", "close", "low"]].max(axis=1))
+        | (frame["low"] > frame[["open", "close", "high"]].min(axis=1))
+    )
+    if invalid_bounds.any():
+        raw_bounds = frame.loc[
+            invalid_bounds,
+            ["open", "close", "high_raw", "low_raw"],
+        ]
+        frame.loc[invalid_bounds, "high"] = raw_bounds.max(axis=1)
+        frame.loc[invalid_bounds, "low"] = raw_bounds.min(axis=1)
+        frame.loc[invalid_bounds, "quality_flag"] = "ohlc_bounds_repaired"
+        logging.warning(
+            "%s 修复 %s 条源数据OHLC边界异常",
+            metadata["name"],
+            int(invalid_bounds.sum()),
+        )
+
     frame["preclose"] = frame["close"].shift(1)
     frame["change"] = frame["close"] - frame["preclose"]
     frame["pct_change_pct"] = frame["change"] / frame["preclose"] * 100.0
@@ -345,6 +375,12 @@ def validate_prices(prices: pd.DataFrame, end_date: str) -> None:
         ].head()
         raise ValueError(f"行情OHLC校验失败:\n{sample.to_string(index=False)}")
 
+    repaired_rows = int((prices["quality_flag"] == "ohlc_bounds_repaired").sum())
+    if repaired_rows > MAX_REPAIRED_OHLC_ROWS:
+        raise ValueError(
+            f"OHLC边界修复记录过多: {repaired_rows} > {MAX_REPAIRED_OHLC_ROWS}"
+        )
+
     requested_end = parse_iso_date(end_date)
     for code in SECURITIES:
         subset = prices[prices["code"] == code]
@@ -412,6 +448,9 @@ def write_outputs(
                 "rows": int(len(subset)),
                 "first_date": str(subset["date"].min()),
                 "last_date": str(subset["date"].max()),
+                "ohlc_repaired_rows": int(
+                    (subset["quality_flag"] == "ohlc_bounds_repaired").sum()
+                ),
                 "source": "tencent_https",
             }
         )
@@ -428,6 +467,9 @@ def write_outputs(
         ),
         "price_rows": int(len(prices)),
         "corporate_action_rows": int(len(corporate_actions)),
+        "ohlc_repaired_rows": int(
+            (prices["quality_flag"] == "ohlc_bounds_repaired").sum()
+        ),
         "securities": security_summary,
         "files": [
             prices_path.name,
@@ -465,9 +507,10 @@ def main() -> None:
     write_outputs(prices, corporate_actions, start_date, end_date)
 
     logging.info(
-        "完成：行情 %s 行，公司行为 %s 行，输出目录 %s",
+        "完成：行情 %s 行，公司行为 %s 行，OHLC修复 %s 行，输出目录 %s",
         len(prices),
         len(corporate_actions),
+        int((prices["quality_flag"] == "ohlc_bounds_repaired").sum()),
         DATA_DIR,
     )
 
