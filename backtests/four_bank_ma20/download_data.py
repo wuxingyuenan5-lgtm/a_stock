@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Download auditable daily data for the four-bank MA20 portfolio backtest.
 
-Prices are fetched from Eastmoney's public HTTPS kline endpoint with fqt=0
-(unadjusted). Corporate actions are fetched through AKShare's Eastmoney-backed
-stock_fhps_detail_em interface and stored separately for explicit accounting by
-the backtest engine.
+The downloader uses unadjusted prices. Tencent's HTTPS daily-kline endpoint is
+primary; Eastmoney's HTTPS endpoint is retained as a fallback. Corporate actions
+are fetched through AKShare's Eastmoney-backed stock_fhps_detail_em interface and
+stored separately for explicit accounting by the backtest engine.
 """
 
 from __future__ import annotations
@@ -24,8 +24,10 @@ import requests
 DATA_DIR = Path("data/four_bank_ma20")
 DEFAULT_START_DATE = "2011-01-01"
 MAX_SOURCE_STALENESS_DAYS = 20
+MIN_EXPECTED_ROWS = 1000
 
-PRICE_ENDPOINTS = [
+TENCENT_PRICE_ENDPOINT = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+EASTMONEY_PRICE_ENDPOINTS = [
     "https://push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://33.push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://63.push2his.eastmoney.com/api/qt/stock/kline/get",
@@ -33,31 +35,36 @@ PRICE_ENDPOINTS = [
 
 SECURITIES: dict[str, dict[str, str]] = {
     "sh.000001": {
-        "secid": "1.000001",
+        "tencent_symbol": "sh000001",
+        "eastmoney_secid": "1.000001",
         "symbol": "000001",
         "name": "上证指数",
         "asset_type": "index",
     },
     "sh.601988": {
-        "secid": "1.601988",
+        "tencent_symbol": "sh601988",
+        "eastmoney_secid": "1.601988",
         "symbol": "601988",
         "name": "中国银行",
         "asset_type": "stock",
     },
     "sh.601398": {
-        "secid": "1.601398",
+        "tencent_symbol": "sh601398",
+        "eastmoney_secid": "1.601398",
         "symbol": "601398",
         "name": "工商银行",
         "asset_type": "stock",
     },
     "sh.601939": {
-        "secid": "1.601939",
+        "tencent_symbol": "sh601939",
+        "eastmoney_secid": "1.601939",
         "symbol": "601939",
         "name": "建设银行",
         "asset_type": "stock",
     },
     "sh.601288": {
-        "secid": "1.601288",
+        "tencent_symbol": "sh601288",
+        "eastmoney_secid": "1.601288",
         "symbol": "601288",
         "name": "农业银行",
         "asset_type": "stock",
@@ -139,7 +146,138 @@ def column_or_na(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.Series(pd.NA, index=frame.index, dtype="object")
 
 
-def request_price_payload(secid: str, start_date: str, end_date: str) -> dict[str, object]:
+def request_json(
+    url: str,
+    params: dict[str, str],
+    referer: str,
+    timeout: tuple[int, int] = (10, 45),
+) -> dict[str, object]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+        ),
+        "Referer": referer,
+        "Accept": "application/json,text/plain,*/*",
+    }
+    response = requests.get(url, params=params, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("接口未返回JSON对象")
+    return payload
+
+
+def tencent_rows(
+    tencent_symbol: str,
+    start_date: str,
+    end_date: str,
+    count: int,
+) -> list[list[str]]:
+    params = {
+        "param": f"{tencent_symbol},day,{start_date},{end_date},{count}",
+        "r": str(time.time_ns()),
+    }
+    payload = request_json(
+        TENCENT_PRICE_ENDPOINT,
+        params,
+        referer="https://gu.qq.com/",
+    )
+    if payload.get("code") != 0:
+        raise RuntimeError(f"腾讯行情接口错误: {payload.get('code')} {payload.get('msg')}")
+    data = payload.get("data")
+    security_data = data.get(tencent_symbol) if isinstance(data, dict) else None
+    rows = security_data.get("day") if isinstance(security_data, dict) else None
+    if not rows:
+        raise RuntimeError(f"腾讯行情返回空数据: {tencent_symbol}")
+    return [[str(value) for value in row] for row in rows]
+
+
+def fetch_tencent_rows(tencent_symbol: str, start_date: str, end_date: str) -> list[list[str]]:
+    full_rows = retry(
+        lambda: tencent_rows(tencent_symbol, start_date, end_date, 6400),
+        attempts=3,
+        delay=1.5,
+    )
+    if len(full_rows) >= MIN_EXPECTED_ROWS:
+        return full_rows
+
+    logging.info(
+        "腾讯单次返回 %s 行，改为按两年区间分段下载: %s",
+        len(full_rows),
+        tencent_symbol,
+    )
+    start = parse_iso_date(start_date)
+    end = parse_iso_date(end_date)
+    chunk_rows: list[list[str]] = []
+    chunk_start_year = start.year
+    while chunk_start_year <= end.year:
+        chunk_start = max(start, date(chunk_start_year, 1, 1))
+        chunk_end = min(end, date(chunk_start_year + 1, 12, 31))
+        rows = retry(
+            lambda chunk_start=chunk_start, chunk_end=chunk_end: tencent_rows(
+                tencent_symbol,
+                chunk_start.isoformat(),
+                chunk_end.isoformat(),
+                640,
+            ),
+            attempts=3,
+            delay=1.5,
+        )
+        chunk_rows.extend(rows)
+        chunk_start_year += 2
+        time.sleep(0.4)
+    return chunk_rows
+
+
+def normalize_tencent_price(
+    rows: list[list[str]],
+    code: str,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    parsed_rows = [row[:6] for row in rows if len(row) >= 6]
+    if not parsed_rows:
+        raise ValueError(f"{code} 腾讯行情字段为空")
+
+    frame = pd.DataFrame(
+        parsed_rows,
+        columns=["date", "open", "close", "high", "low", "volume_raw"],
+    )
+    for column in ["open", "close", "high", "low", "volume_raw"]:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame = frame.dropna(subset=["date", "open", "high", "low", "close"])
+    frame = frame[
+        (frame["date"] >= pd.Timestamp(start_date))
+        & (frame["date"] <= pd.Timestamp(end_date))
+    ]
+    frame.sort_values("date", inplace=True)
+    frame.drop_duplicates("date", keep="last", inplace=True)
+
+    frame["preclose"] = frame["close"].shift(1)
+    frame["change"] = frame["close"] - frame["preclose"]
+    frame["pct_change_pct"] = frame["change"] / frame["preclose"] * 100.0
+    frame["amplitude_pct"] = (
+        (frame["high"] - frame["low"]) / frame["preclose"] * 100.0
+    )
+    frame["amount"] = pd.NA
+    frame["turnover_pct"] = pd.NA
+    frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
+
+    metadata = SECURITIES[code]
+    frame["code"] = code
+    frame["symbol"] = metadata["symbol"]
+    frame["name"] = metadata["name"]
+    frame["asset_type"] = metadata["asset_type"]
+    frame["trade_status"] = 1
+    frame["is_st"] = 0
+    frame["adjustment"] = "unadjusted"
+    frame["source"] = "tencent_https"
+    return frame[PRICE_COLUMNS].reset_index(drop=True)
+
+
+def request_eastmoney_payload(secid: str, start_date: str, end_date: str) -> dict[str, object]:
     params = {
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
@@ -151,30 +289,18 @@ def request_price_payload(secid: str, start_date: str, end_date: str) -> dict[st
         "end": compact_date(end_date),
         "lmt": "1000000",
     }
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"
-        ),
-        "Referer": "https://quote.eastmoney.com/",
-        "Accept": "application/json,text/plain,*/*",
-    }
-
     errors: list[str] = []
-    for endpoint in PRICE_ENDPOINTS:
+    for endpoint in EASTMONEY_PRICE_ENDPOINTS:
         try:
-            response = requests.get(
+            payload = request_json(
                 endpoint,
-                params=params,
-                headers=headers,
-                timeout=(10, 45),
+                params,
+                referer="https://quote.eastmoney.com/",
             )
-            response.raise_for_status()
-            payload = response.json()
-            data = payload.get("data") if isinstance(payload, dict) else None
+            data = payload.get("data")
             klines = data.get("klines") if isinstance(data, dict) else None
             if not klines:
-                raise RuntimeError(f"接口返回空行情: {payload.get('rc') if isinstance(payload, dict) else 'unknown'}")
+                raise RuntimeError(f"接口返回空行情: {payload.get('rc')}")
             return payload
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{endpoint}: {exc}")
@@ -182,13 +308,7 @@ def request_price_payload(secid: str, start_date: str, end_date: str) -> dict[st
     raise RuntimeError("；".join(errors))
 
 
-def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
-    metadata = SECURITIES[code]
-    payload = retry(
-        lambda: request_price_payload(metadata["secid"], start_date, end_date),
-        attempts=3,
-        delay=1.5,
-    )
+def normalize_eastmoney_price(payload: dict[str, object], code: str) -> pd.DataFrame:
     data = payload["data"]
     rows = [str(item).split(",") for item in data["klines"]]
     expected_columns = [
@@ -205,18 +325,19 @@ def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
         "turnover_pct",
     ]
     if any(len(row) != len(expected_columns) for row in rows):
-        raise ValueError(f"{code} 行情字段数量异常")
+        raise ValueError(f"{code} 东方财富行情字段数量异常")
 
     frame = pd.DataFrame(rows, columns=expected_columns)
     numeric_columns = [column for column in expected_columns if column != "date"]
     for column in numeric_columns:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
-
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame = frame.dropna(subset=["date", "open", "high", "low", "close"])
     frame.sort_values("date", inplace=True)
     frame["preclose"] = frame["close"].shift(1)
     frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
+
+    metadata = SECURITIES[code]
     frame["code"] = code
     frame["symbol"] = metadata["symbol"]
     frame["name"] = metadata["name"]
@@ -224,14 +345,29 @@ def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
     frame["trade_status"] = 1
     frame["is_st"] = 0
     frame["adjustment"] = "unadjusted"
-    frame["source"] = "eastmoney_https"
+    frame["source"] = "eastmoney_https_fallback"
+    return frame[PRICE_COLUMNS].reset_index(drop=True)
 
-    return (
-        frame[PRICE_COLUMNS]
-        .sort_values("date")
-        .drop_duplicates(["date", "code"])
-        .reset_index(drop=True)
+
+def fetch_price(code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    metadata = SECURITIES[code]
+    try:
+        rows = fetch_tencent_rows(metadata["tencent_symbol"], start_date, end_date)
+        frame = normalize_tencent_price(rows, code, start_date, end_date)
+        if len(frame) < MIN_EXPECTED_ROWS:
+            raise ValueError(f"腾讯行情仅返回 {len(frame)} 行")
+        return frame
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("腾讯行情失败，改用东方财富: %s %s", code, exc)
+
+    payload = retry(
+        lambda: request_eastmoney_payload(
+            metadata["eastmoney_secid"], start_date, end_date
+        ),
+        attempts=4,
+        delay=3.0,
     )
+    return normalize_eastmoney_price(payload, code)
 
 
 def fetch_all_prices(start_date: str, end_date: str) -> pd.DataFrame:
@@ -239,7 +375,7 @@ def fetch_all_prices(start_date: str, end_date: str) -> pd.DataFrame:
     for code, metadata in SECURITIES.items():
         logging.info("下载日线行情: %s %s", code, metadata["name"])
         frames.append(fetch_price(code, start_date, end_date))
-        time.sleep(0.3)
+        time.sleep(1.0)
     return pd.concat(frames, ignore_index=True).sort_values(["date", "code"])
 
 
@@ -247,8 +383,8 @@ def fetch_corporate_actions(code: str) -> pd.DataFrame:
     metadata = SECURITIES[code]
     raw = retry(
         lambda: ak.stock_fhps_detail_em(symbol=metadata["symbol"]),
-        attempts=4,
-        delay=1.5,
+        attempts=5,
+        delay=2.0,
     )
     if raw.empty:
         return pd.DataFrame(columns=CORPORATE_ACTION_COLUMNS)
@@ -311,7 +447,7 @@ def fetch_all_corporate_actions(start_date: str, end_date: str) -> pd.DataFrame:
             continue
         logging.info("下载公司行为: %s %s", code, metadata["name"])
         frames.append(fetch_corporate_actions(code))
-        time.sleep(0.3)
+        time.sleep(1.0)
 
     if not frames:
         return pd.DataFrame(columns=CORPORATE_ACTION_COLUMNS)
@@ -343,7 +479,7 @@ def validate_prices(prices: pd.DataFrame, end_date: str) -> None:
     requested_end = parse_iso_date(end_date)
     for code in SECURITIES:
         subset = prices[prices["code"] == code]
-        if len(subset) < 1000:
+        if len(subset) < MIN_EXPECTED_ROWS:
             raise ValueError(f"{code} 历史行数异常，仅 {len(subset)} 行")
         latest = parse_iso_date(str(subset["date"].max()))
         if (requested_end - latest).days > MAX_SOURCE_STALENESS_DAYS:
@@ -353,11 +489,12 @@ def validate_prices(prices: pd.DataFrame, end_date: str) -> None:
 def validate_corporate_actions(corporate_actions: pd.DataFrame) -> None:
     if corporate_actions.empty:
         raise ValueError("四只银行股均未获取到公司行为数据")
-    missing_codes = {
+    expected_codes = {
         code
         for code, metadata in SECURITIES.items()
         if metadata["asset_type"] == "stock"
-    } - set(corporate_actions["code"].unique())
+    }
+    missing_codes = expected_codes - set(corporate_actions["code"].unique())
     if missing_codes:
         raise ValueError(f"公司行为缺少标的: {sorted(missing_codes)}")
 
@@ -406,7 +543,7 @@ def write_outputs(
                 "rows": int(len(subset)),
                 "first_date": str(subset["date"].min()),
                 "last_date": str(subset["date"].max()),
-                "source": "eastmoney_https",
+                "source": sorted(subset["source"].dropna().astype(str).unique().tolist()),
             }
         )
 
@@ -415,7 +552,7 @@ def write_outputs(
         "requested_start_date": start_date,
         "requested_end_date": end_date,
         "price_adjustment": "unadjusted",
-        "price_source": "Eastmoney public HTTPS kline endpoint",
+        "price_source_priority": ["Tencent HTTPS", "Eastmoney HTTPS fallback"],
         "corporate_action_source": "AKShare stock_fhps_detail_em (Eastmoney)",
         "corporate_action_policy": (
             "Apply cash and share distributions explicitly in the backtest account."
