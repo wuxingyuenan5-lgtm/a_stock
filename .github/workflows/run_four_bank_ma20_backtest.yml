@@ -1,0 +1,74 @@
+name: Run Four-Bank MA20 Backtest
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - backtests/four_bank_ma20/backtest.py
+      - backtests/four_bank_ma20/test_backtest.py
+      - data/four_bank_ma20/**
+      - requirements.txt
+      - .github/workflows/run_four_bank_ma20_backtest.yml
+  push:
+    branches:
+      - main
+      - data/four-bank-ma20-backtest
+    paths:
+      - backtests/four_bank_ma20/backtest.py
+      - backtests/four_bank_ma20/test_backtest.py
+      - data/four_bank_ma20/**
+      - requirements.txt
+      - .github/workflows/run_four_bank_ma20_backtest.yml
+
+concurrency:
+  group: four-bank-ma20-backtest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile backtest code
+        run: python -m py_compile backtests/four_bank_ma20/backtest.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s backtests/four_bank_ma20 -p "test_*.py" -v
+
+      - name: Run default backtest
+        run: python backtests/four_bank_ma20/backtest.py
+
+      - name: Upload backtest results
+        uses: actions/upload-artifact@v4
+        with:
+          name: four-bank-ma20-backtest-results
+          path: results/four_bank_ma20/
+          if-no-files-found: error
+
+      - name: Commit generated results
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/four_bank_ma20
+          if git diff --cached --quiet; then
+            echo "No result changes"
+            exit 0
+          fi
+          git commit -m "results: update four-bank MA20 backtest"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
