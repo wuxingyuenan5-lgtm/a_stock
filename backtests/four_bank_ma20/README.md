@@ -1,101 +1,162 @@
-# 四大行 MA20 组合回测数据
+# 四大行 MA20 组合回测
 
-本目录为以下策略准备可审计的日频数据：
+本目录包含数据下载脚本、完整回测引擎、单元测试和 GitHub Actions。
 
-- 信号：上证指数收盘价相对 20 日均线的跌破与上穿；
+## 默认策略
+
+- 择时标的：上证指数 `sh.000001`；
+- 均线：20 个交易日简单移动平均线；
+- 开仓：上证指数收盘价由上向下跌破 MA20，在下一可交易日开盘买入；
+- 平仓：上证指数收盘价由下向上突破 MA20，在下一可交易日开盘卖出；
 - 持仓：中国银行、工商银行、建设银行、农业银行；
-- 组合：开仓时四只股票等权配置；
-- 成交：信号确认后的下一交易日开盘价；
-- 公司行为：使用不复权价格成交，现金分红、送股和转增单独记账。
+- 配置：四只股票等权，按 100 股整数手买入，持有期间不再平衡；
+- 价格：使用不复权开盘价成交、不复权收盘价估值；
+- 公司行为：在除权除息日、当日开盘成交前，显式计入现金分红、送股和转增；
+- 样本末仍持仓时按最后收盘价估值，不伪造下一交易日开盘价强制平仓。
 
-## 标的
+信号模式可以切换为趋势跟随：上穿 MA20 买入、下穿 MA20 卖出。
+
+## 默认成本参数
+
+| 参数 | 默认值 |
+|---|---:|
+| 初始资金 | 1,000,000 元 |
+| 佣金率 | 0.03% |
+| 单笔最低佣金 | 5 元 |
+| 滑点 | 0 bps |
+| 股息税率 | 0% |
+| 卖出印花税 | 历史口径 |
+
+历史印花税口径：2023-08-28 以前按卖出金额的 0.1%，此后按 0.05%。所有参数均可通过命令行修改。
+
+## 数据标的
 
 | 标准代码 | 名称 | 用途 |
 |---|---|---|
-| `sh.000001` | 上证指数 | 择时信号 |
+| `sh.000001` | 上证指数 | MA20 信号 |
 | `sh.601988` | 中国银行 | 组合持仓 |
 | `sh.601398` | 工商银行 | 组合持仓 |
 | `sh.601939` | 建设银行 | 组合持仓 |
 | `sh.601288` | 农业银行 | 组合持仓 |
 
-默认下载区间从 `2011-01-01` 至运行当日。
+## 数据文件
 
-## 数据源
+`download_data.py` 生成：
 
-行情数据通过腾讯证券公开 HTTPS 日线接口分段获取，使用未复权的 `day` 数据。公司行为通过 AKShare 的 `stock_fhps_detail_em()` 获取，其底层为东方财富分红送配详情数据。现金分红、送股和转股比例由每 10 股口径转换为每股口径。
+```text
+data/four_bank_ma20/
+├── daily_prices_unadjusted.csv
+├── corporate_actions.csv
+├── open_prices_wide.csv
+├── close_prices_wide.csv
+└── manifest.json
+```
 
-下载失败时工作流直接报错，不会静默使用复权价格或其他口径覆盖。
+行情通过腾讯证券公开 HTTPS 日线接口按两年区间下载。公司行为通过 AKShare 的 `stock_fhps_detail_em()` 获取。
 
-## 输出文件
+若源数据的最高价或最低价不能包络开盘价、收盘价，脚本会保留 `high_raw/low_raw`，确定性修复可用 `high/low`，并写入 `quality_flag=ohlc_bounds_repaired`；修复记录超过阈值时直接终止。
 
-运行后写入 `data/four_bank_ma20/`：
+## 回测输出
 
-- `daily_prices_unadjusted.csv`：五个标的的长表日线；
-- `corporate_actions.csv`：四只银行股的现金分红、送股、转增及相关日期；
-- `open_prices_wide.csv`：开盘价宽表，便于回测撮合；
-- `close_prices_wide.csv`：收盘价宽表，便于信号和每日估值；
-- `manifest.json`：生成时间、覆盖区间、行数、质量修复数量和数据源。
+`backtest.py` 默认写入：
 
-CSV 使用 UTF-8 BOM，可直接用 Excel 打开。
+```text
+results/four_bank_ma20/
+├── summary.json
+├── report.md
+├── equity_curve.csv
+├── annual_returns.csv
+├── trades.csv
+├── fills.csv
+├── signal_ledger.csv
+├── corporate_action_ledger.csv
+└── signals.csv
+```
 
-## 行情字段与质量处理
+其中：
 
-`daily_prices_unadjusted.csv` 的主要字段：
+- `report.md`：核心绩效、交易统计、年度收益和口径说明；
+- `summary.json`：结构化汇总；
+- `equity_curve.csv`：策略、四大行买入持有和上证指数价格基准的每日净值；
+- `trades.csv`：每轮完整交易；
+- `fills.csv`：四只股票逐笔成交、佣金和印花税；
+- `signal_ledger.csv`：信号是否被执行或忽略；
+- `corporate_action_ledger.csv`：持仓期间实际计入的现金分红和送转；
+- `signals.csv`：指数、MA、交叉方向和原始信号。
 
-- `date`：交易日；
-- `open/high/low/close/preclose`：不复权价格；
-- `high_raw/low_raw`：数据源原始最高价和最低价；
-- `quality_flag`：数据质量标记；
-- `volume_raw`：数据源原始成交量字段，不自行改变单位；
-- `amount`：腾讯历史接口未提供时为空；
-- `amplitude_pct/pct_change_pct/turnover_pct`：百分比口径字段；
-- `source`：实际数据源。
+## Windows 本地运行
 
-少数源数据可能出现最高价或最低价不包络开盘价、收盘价的异常。脚本不会静默删除交易日，而是：
+在仓库根目录打开 PowerShell：
 
-1. 在 `high_raw/low_raw` 中保留原始值；
-2. 将可用 `high/low` 修复为 `open、close、high_raw、low_raw` 的最大值和最小值；
-3. 将该行标记为 `quality_flag=ohlc_bounds_repaired`；
-4. 若全样本修复行数超过 10 行，则停止生成数据。
-
-当前策略信号和成交只依赖收盘价、开盘价，因此该处理既保留交易日和实际使用字段，也保留完整审计痕迹。
-
-## 公司行为字段
-
-`corporate_actions.csv` 的主要字段：
-
-- `report_date`：分红方案对应报告期；
-- `record_date`：股权登记日；
-- `ex_date`：除权除息日；
-- `cash_before_tax_per_share`：每股税前现金股利；
-- `stock_dividend_per_share`：每股送股数量；
-- `capitalisation_issue_per_share`：每股转增数量；
-- `plan_status/plan_description`：方案状态和原始描述。
-
-东方财富详情接口没有稳定提供实际派息到账日，因此 `payment_date` 暂为空。回测引擎应在除权除息日计入应收股利，避免不复权价格除息下跌造成虚假损失。
-
-## 本地运行
-
-```bash
+```powershell
 python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python backtests/four_bank_ma20/download_data.py
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python backtests/four_bank_ma20/backtest.py
 ```
 
-指定区间：
+测试：
 
-```bash
-python backtests/four_bank_ma20/download_data.py \
-  --start-date 2011-01-01 \
-  --end-date 2026-07-31
+```powershell
+python -m unittest discover -s backtests/four_bank_ma20 -p "test_*.py" -v
 ```
 
-脚本会检查：
+若需要重新下载数据：
 
-- `date + code` 是否重复；
-- OHLC 关系是否有效；
-- OHLC 修复记录是否超过阈值；
-- 每个标的历史行数是否明显不足；
-- 最新交易日是否与请求截止日相距过久；
-- 四只银行股是否均有公司行为记录。
+```powershell
+python backtests/four_bank_ma20/download_data.py --start-date 2011-01-01
+```
+
+## 常用参数
+
+均值回归默认版本：
+
+```powershell
+python backtests/four_bank_ma20/backtest.py `
+  --initial-capital 1000000 `
+  --ma-window 20 `
+  --signal-mode mean_reversion `
+  --commission-rate 0.0003 `
+  --minimum-commission 5 `
+  --slippage-bps 0 `
+  --dividend-tax-rate 0 `
+  --stamp-duty-mode historical
+```
+
+加入 5 bps 单边滑点：
+
+```powershell
+python backtests/four_bank_ma20/backtest.py --slippage-bps 5
+```
+
+切换为趋势跟随：
+
+```powershell
+python backtests/four_bank_ma20/backtest.py --signal-mode trend_following
+```
+
+固定印花税或完全忽略印花税：
+
+```powershell
+python backtests/four_bank_ma20/backtest.py --stamp-duty-mode fixed --fixed-stamp-duty-rate 0.0005
+python backtests/four_bank_ma20/backtest.py --stamp-duty-mode none
+```
+
+## 无未来函数约束
+
+- MA 与交叉信号只使用当日及此前收盘价；
+- 信号必须到当日收盘后才确认；
+- 买卖价格严格取下一可交易日开盘价；
+- 不能取得下一交易日开盘价时，不执行该信号；
+- 公司行为在除权除息日开盘前处理，避免买入除权日股票却错误取得股息。
+
+## 自动运行
+
+`.github/workflows/run_four_bank_ma20_backtest.yml` 会自动：
+
+1. 安装依赖；
+2. 编译检查；
+3. 运行单元测试；
+4. 执行默认回测；
+5. 上传完整结果；
+6. 在分支 push 事件中将结果提交回当前分支。
