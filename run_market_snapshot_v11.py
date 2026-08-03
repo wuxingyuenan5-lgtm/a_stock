@@ -2,7 +2,6 @@
 """Current market update with a verified 2026-07-31 universe cache fallback."""
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 from pathlib import Path
 
@@ -59,10 +58,12 @@ def load_cached_universe() -> pd.DataFrame:
 def fetch_universe_resilient() -> pd.DataFrame:
     try:
         universe = _ORIGINAL_EM_UNIVERSE().copy()
+        if len(universe) < 5000:
+            raise RuntimeError(f"当日股票主表仅返回 {len(universe)} 只")
         universe["交易所"] = universe["股票代码"].map(exchange_for)
         return universe
     except Exception as exc:
-        logging.warning("当日股票主表失败，启用最近交易日验证缓存: %s", exc)
+        logging.warning("当日股票主表失败或不完整，启用最近交易日验证缓存: %s", exc)
         return load_cached_universe()
 
 
