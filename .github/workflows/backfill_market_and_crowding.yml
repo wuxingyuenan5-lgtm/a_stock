@@ -25,7 +25,7 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,7 +43,7 @@ jobs:
         run: |
           mkdir -p data
           set -o pipefail
-          python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 8 --limit-workers 8 2>&1 | tee data/backfill_run.log
+          python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 4 --limit-workers 6 2>&1 | tee data/backfill_run.log
       - name: Upload backfill artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -54,4 +54,5 @@ jobs:
             data/industry_crowding_history.csv
             data/backfill_quality.csv
             data/backfill_run.log
+            data/backfill_parts/*.csv
           if-no-files-found: warn
