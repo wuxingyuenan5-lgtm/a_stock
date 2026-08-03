@@ -1,5 +1,6 @@
 name: Rebuild Unified Daily Core History
 
+# v3 reconnecting runner is the audited entry point.
 on:
   workflow_dispatch:
   push:
