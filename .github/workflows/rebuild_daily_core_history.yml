@@ -7,11 +7,13 @@ on:
       - optimize-market-dashboard-v1
     paths:
       - rebuild_daily_core_history.py
+      - rebuild_daily_core_history_v2.py
       - .github/workflows/rebuild_daily_core_history.yml
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - rebuild_daily_core_history.py
+      - rebuild_daily_core_history_v2.py
       - .github/workflows/rebuild_daily_core_history.yml
 
 permissions:
@@ -37,15 +39,15 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install baostock
-      - name: Validate script
-        run: python -m py_compile rebuild_daily_core_history.py
+      - name: Validate scripts
+        run: python -m py_compile rebuild_daily_core_history.py rebuild_daily_core_history_v2.py run_market_snapshot_v2.py
       - name: Rebuild 2026 unified history
         shell: bash
         run: |
           mkdir -p data
           rm -rf data/daily_core_parts
           set -o pipefail
-          python rebuild_daily_core_history.py \
+          python rebuild_daily_core_history_v2.py \
             --start-date 2026-01-01 \
             --end-date 2026-08-03 \
             --workers 6 2>&1 | tee data/rebuild_daily_core_run.log
