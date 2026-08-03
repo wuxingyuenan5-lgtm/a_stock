@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: backfill-market-crowding
+  group: backfill-market-crowding-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
