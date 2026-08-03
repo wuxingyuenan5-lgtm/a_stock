@@ -8,12 +8,14 @@ on:
     paths:
       - backfill_market_and_crowding.py
       - run_backfill_market_and_crowding.py
+      - data/bse_security_master.csv
       - .github/workflows/backfill_market_and_crowding.yml
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - backfill_market_and_crowding.py
       - run_backfill_market_and_crowding.py
+      - data/bse_security_master.csv
       - .github/workflows/backfill_market_and_crowding.yml
 
 permissions:
@@ -47,11 +49,11 @@ jobs:
           mkdir -p data
           set -o pipefail
           status=1
-          for attempt in 1 2; do
+          for attempt in 1 2 3; do
             echo "Backfill attempt ${attempt}"
             rm -rf data/backfill_parts
             mkdir -p data/backfill_parts
-            python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 3 --limit-workers 6 2>&1 | tee data/backfill_run.log
+            python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 1 --limit-workers 6 2>&1 | tee data/backfill_run.log
             status=${PIPESTATUS[0]}
             if [ "$status" -eq 0 ]; then
               break
