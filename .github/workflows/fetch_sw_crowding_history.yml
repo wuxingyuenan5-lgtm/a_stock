@@ -8,6 +8,11 @@ on:
     paths:
       - fetch_sw_crowding_history.py
       - .github/workflows/fetch_sw_crowding_history.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - fetch_sw_crowding_history.py
+      - .github/workflows/fetch_sw_crowding_history.yml
 
 permissions:
   contents: read
