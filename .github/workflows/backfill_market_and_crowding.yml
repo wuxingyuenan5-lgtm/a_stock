@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: backfill-market-crowding
+  cancel-in-progress: true
+
 jobs:
   backfill:
     runs-on: ubuntu-latest
