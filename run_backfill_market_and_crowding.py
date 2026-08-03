@@ -3,11 +3,12 @@
 
 Shanghai/Shenzhen securities and IPO dates come from BaoStock's security
 master. Beijing securities and IPO dates come from the repository's verified
-BSE master file. Daily eligibility is still determined from each target day's
-actual trade, ST and listing-date fields inside the backfill process.
+BSE master file. Daily eligibility is determined from each target day's actual
+trade, ST and listing-date fields.
 """
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 import time
 
@@ -19,14 +20,14 @@ import backfill_market_and_crowding as backfill
 BSE_MASTER = Path("data/bse_security_master.csv")
 
 
-def baostock_login_with_retry(attempts: int = 10):
+def baostock_login_with_retry(attempts: int = 12):
     last = None
     for attempt in range(1, attempts + 1):
         result = bs.login()
         if result.error_code == "0":
             return result
         last = result
-        time.sleep(min(5 * attempt, 30))
+        time.sleep(min(3 * attempt, 20))
     raise RuntimeError(f"BaoStock login failed: {last.error_code} {last.error_msg}")
 
 
@@ -76,7 +77,98 @@ def prepare_universe_stable() -> tuple[pd.DataFrame, dict[str, str]]:
     return universe, listing_dates
 
 
+def robust_baostock_worker(
+    worker_id: int,
+    codes: list[str],
+    start_date: str,
+    end_date: str,
+    listing_dates: dict[str, str],
+    output_dir: str,
+) -> tuple[str, int, int]:
+    """BaoStock worker that reconnects after network faults.
+
+    Hosted runners occasionally lose the BaoStock socket after several minutes.
+    The worker therefore reconnects periodically and retries an individual
+    security before recording it as failed.
+    """
+    out_path = Path(output_dir) / f"bs_part_{worker_id:02d}.csv"
+    failures = 0
+    rows_written = 0
+
+    def reconnect() -> None:
+        try:
+            bs.logout()
+        except Exception:
+            pass
+        baostock_login_with_retry()
+
+    baostock_login_with_retry()
+    try:
+        with out_path.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["日期", "股票代码", "涨跌幅", "成交额", "换手率", "交易所"])
+            for position, code in enumerate(codes, start=1):
+                if position > 1 and position % 180 == 1:
+                    reconnect()
+                exchange = backfill.infer_exchange(code)
+                bs_code = f"{exchange}.{code}"
+                success = False
+                for retry in range(3):
+                    try:
+                        rs = bs.query_history_k_data_plus(
+                            bs_code,
+                            "date,code,close,preclose,amount,turn,tradestatus,pctChg,isST",
+                            start_date=start_date,
+                            end_date=end_date,
+                            frequency="d",
+                            adjustflag="3",
+                        )
+                        if rs.error_code != "0":
+                            raise RuntimeError(f"query error {rs.error_code}: {rs.error_msg}")
+                        ipo_date = listing_dates.get(code, "")
+                        while rs.next():
+                            row = rs.get_row_data()
+                            if len(row) != 9:
+                                continue
+                            date, _, close, preclose, amount, turn, trade_status, pct, is_st = row
+                            if trade_status != "1" or is_st == "1" or date == ipo_date:
+                                continue
+                            amount_v = backfill.safe_float(amount)
+                            close_v = backfill.safe_float(close)
+                            pct_v = backfill.safe_float(pct)
+                            preclose_v = backfill.safe_float(preclose)
+                            if (
+                                amount_v is None or close_v is None or pct_v is None
+                                or amount_v <= 0 or close_v <= 0
+                                or preclose_v is None or preclose_v <= 0
+                            ):
+                                continue
+                            turn_v = backfill.safe_float(turn)
+                            writer.writerow([date, code, pct_v / 100.0, amount_v, turn_v, exchange])
+                            rows_written += 1
+                        success = True
+                        break
+                    except Exception:
+                        if retry < 2:
+                            reconnect()
+                if not success:
+                    failures += 1
+                if position % 100 == 0:
+                    print(
+                        f"worker={worker_id} {position}/{len(codes)} "
+                        f"rows={rows_written} failures={failures}",
+                        flush=True,
+                    )
+    finally:
+        try:
+            bs.logout()
+        except Exception:
+            pass
+    return str(out_path), rows_written, failures
+
+
 backfill.prepare_universe = prepare_universe_stable
+backfill.baostock_worker = robust_baostock_worker
 
 if __name__ == "__main__":
     backfill.main()
