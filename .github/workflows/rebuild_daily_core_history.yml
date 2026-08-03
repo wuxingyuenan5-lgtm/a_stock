@@ -1,0 +1,66 @@
+name: Rebuild Unified Daily Core History
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - optimize-market-dashboard-v1
+    paths:
+      - rebuild_daily_core_history.py
+      - .github/workflows/rebuild_daily_core_history.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - rebuild_daily_core_history.py
+      - .github/workflows/rebuild_daily_core_history.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rebuild-daily-core-history
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install baostock
+      - name: Validate script
+        run: python -m py_compile rebuild_daily_core_history.py
+      - name: Rebuild 2026 unified history
+        shell: bash
+        run: |
+          mkdir -p data
+          rm -rf data/daily_core_parts
+          set -o pipefail
+          python rebuild_daily_core_history.py \
+            --start-date 2026-01-01 \
+            --end-date 2026-08-03 \
+            --workers 6 2>&1 | tee data/rebuild_daily_core_run.log
+      - name: Upload rebuilt history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-daily-core-history-2026
+          path: |
+            data/daily_core_history_2026.csv
+            data/hot_turnover_industry_history_long_2026.csv
+            data/hot_turnover_industry_history_wide_2026.csv
+            data/sw_crowding_history_2026.csv
+            data/rebuild_daily_core_quality_2026.csv
+            data/daily_stock_history_2026.csv
+            data/rebuild_daily_core_run.log
+            data/daily_core_parts/*.csv
+          if-no-files-found: warn
