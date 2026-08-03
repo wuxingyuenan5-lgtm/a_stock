@@ -53,7 +53,7 @@ jobs:
             echo "Backfill attempt ${attempt}"
             rm -rf data/backfill_parts
             mkdir -p data/backfill_parts
-            python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 1 --limit-workers 6 2>&1 | tee data/backfill_run.log
+            python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 4 --limit-workers 6 2>&1 | tee data/backfill_run.log
             status=${PIPESTATUS[0]}
             if [ "$status" -eq 0 ]; then
               break
