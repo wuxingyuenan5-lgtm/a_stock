@@ -8,6 +8,10 @@ on:
     paths:
       - backfill_market_and_crowding.py
       - .github/workflows/backfill_market_and_crowding.yml
+  pull_request:
+    paths:
+      - backfill_market_and_crowding.py
+      - .github/workflows/backfill_market_and_crowding.yml
 
 permissions:
   contents: read
