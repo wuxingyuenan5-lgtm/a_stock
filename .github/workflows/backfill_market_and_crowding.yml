@@ -10,6 +10,7 @@ on:
       - run_backfill_market_and_crowding.py
       - .github/workflows/backfill_market_and_crowding.yml
   pull_request:
+    types: [opened, synchronize, reopened]
     paths:
       - backfill_market_and_crowding.py
       - run_backfill_market_and_crowding.py
@@ -59,7 +60,7 @@ jobs:
           done
           exit "$status"
       - name: Commit successful backfill outputs
-        if: success() && github.event_name == 'push'
+        if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
