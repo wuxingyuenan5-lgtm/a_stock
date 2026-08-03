@@ -13,10 +13,9 @@ import pandas as pd
 import run_market_snapshot_v2 as universe_source
 
 DATA_DIR = Path("data")
-CHOICE_CANDIDATES = ["800007.EI", "sz800007", "sh800007", "bj800007", "zs800007", "jj800007"]
 
 
-def fetch_tx(symbol: str, start: str, end: str, attempts: int = 4) -> pd.DataFrame:
+def fetch_tx(symbol: str, start: str, end: str, attempts: int = 3) -> pd.DataFrame:
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
@@ -25,14 +24,14 @@ def fetch_tx(symbol: str, start: str, end: str, attempts: int = 4) -> pd.DataFra
                 start_date=start,
                 end_date=end,
                 adjust="",
-                timeout=35,
+                timeout=20,
             )
             if frame is None or frame.empty:
                 raise RuntimeError("empty history")
             return frame
         except Exception as exc:
             last_error = exc
-            time.sleep(attempt * 0.8)
+            time.sleep(attempt * 0.6)
     assert last_error is not None
     raise last_error
 
@@ -73,7 +72,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--start-date", default="20260101")
     parser.add_argument("--end-date", default="20260803")
-    parser.add_argument("--workers", type=int, default=16)
+    parser.add_argument("--workers", type=int, default=24)
     args = parser.parse_args()
     DATA_DIR.mkdir(exist_ok=True)
 
@@ -86,20 +85,7 @@ def main() -> None:
             quality.append({"检查项": f"{name}腾讯历史", "数值": len(frame), "状态": "通过", "说明": symbol})
         except Exception as exc:
             quality.append({"检查项": f"{name}腾讯历史", "数值": 0, "状态": "失败", "说明": str(exc)})
-
-    choice_success = None
-    for candidate in CHOICE_CANDIDATES:
-        try:
-            frame = index_history(candidate, "Choice微盘股指数", args.start_date, args.end_date)
-            if len(frame) >= 20:
-                choice_success = candidate
-                index_frames.append(frame)
-                quality.append({"检查项": "Choice微盘腾讯历史", "数值": len(frame), "状态": "通过", "说明": candidate})
-                break
-        except Exception as exc:
-            quality.append({"检查项": f"Choice候选{candidate}", "数值": 0, "状态": "提示", "说明": str(exc)})
-    if choice_success is None:
-        quality.append({"检查项": "Choice微盘腾讯历史", "数值": 0, "状态": "提示", "说明": "腾讯未识别候选代码"})
+    quality.append({"检查项": "Choice微盘腾讯历史", "数值": 0, "状态": "提示", "说明": "无经验证的腾讯代码；近期使用Choice原始快照"})
 
     if index_frames:
         pd.concat(index_frames, ignore_index=True).to_csv(
