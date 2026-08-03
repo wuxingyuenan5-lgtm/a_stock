@@ -1,0 +1,50 @@
+name: Fetch BSE History Static
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - optimize-market-dashboard-v1
+    paths:
+      - fetch_bj_history_static.py
+      - .github/workflows/fetch_bj_history_static.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - fetch_bj_history_static.py
+      - .github/workflows/fetch_bj_history_static.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile fetch_bj_history_static.py
+      - name: Fetch BSE Tencent history
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          python fetch_bj_history_static.py --start-date 20260101 --end-date 20260803 --workers 24 2>&1 | tee data/bj_history_static_run.log
+      - name: Upload BSE history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bj-history-static-2026
+          path: |
+            data/bj_stock_history_tx_static_2026.csv
+            data/bj_stock_history_tx_static_errors_2026.csv
+            data/bj_stock_history_tx_static_quality_2026.csv
+            data/bj_history_static_run.log
+          if-no-files-found: warn
