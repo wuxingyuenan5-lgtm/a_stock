@@ -7,10 +7,12 @@ on:
       - optimize-market-dashboard-v1
     paths:
       - backfill_market_and_crowding.py
+      - run_backfill_market_and_crowding.py
       - .github/workflows/backfill_market_and_crowding.yml
   pull_request:
     paths:
       - backfill_market_and_crowding.py
+      - run_backfill_market_and_crowding.py
       - .github/workflows/backfill_market_and_crowding.yml
 
 permissions:
@@ -34,14 +36,14 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install baostock
-      - name: Validate script
-        run: python -m py_compile backfill_market_and_crowding.py
+      - name: Validate scripts
+        run: python -m py_compile backfill_market_and_crowding.py run_backfill_market_and_crowding.py
       - name: Backfill 2026 history
         shell: bash
         run: |
           mkdir -p data
           set -o pipefail
-          python backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 8 --limit-workers 8 2>&1 | tee data/backfill_run.log
+          python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 8 --limit-workers 8 2>&1 | tee data/backfill_run.log
       - name: Upload backfill artifact
         if: always()
         uses: actions/upload-artifact@v4
