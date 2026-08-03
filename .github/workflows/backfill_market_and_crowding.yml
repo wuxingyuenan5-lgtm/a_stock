@@ -16,7 +16,7 @@ on:
       - .github/workflows/backfill_market_and_crowding.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: backfill-market-crowding
@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -43,7 +45,31 @@ jobs:
         run: |
           mkdir -p data
           set -o pipefail
-          python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 4 --limit-workers 6 2>&1 | tee data/backfill_run.log
+          status=1
+          for attempt in 1 2; do
+            echo "Backfill attempt ${attempt}"
+            rm -rf data/backfill_parts
+            mkdir -p data/backfill_parts
+            python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 4 --limit-workers 6 2>&1 | tee data/backfill_run.log
+            status=${PIPESTATUS[0]}
+            if [ "$status" -eq 0 ]; then
+              break
+            fi
+            sleep 30
+          done
+          exit "$status"
+      - name: Commit successful backfill outputs
+        if: success() && github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/market_daily_history_backfilled.csv data/industry_crowding_history.csv data/backfill_quality.csv
+          if git diff --cached --quiet; then
+            echo "No backfill changes"
+          else
+            git commit -m "data: backfill 2026 market breadth and crowding"
+            git push origin HEAD:optimize-market-dashboard-v1
+          fi
       - name: Upload backfill artifact
         if: always()
         uses: actions/upload-artifact@v4
