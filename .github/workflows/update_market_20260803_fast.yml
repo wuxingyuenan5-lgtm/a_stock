@@ -1,0 +1,40 @@
+name: Update Market 20260803 Fast
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - run_market_snapshot_v9.py
+      - .github/workflows/update_market_20260803_fast.yml
+
+permissions:
+  contents: read
+
+jobs:
+  market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile build_market_snapshot.py backfill_market_and_crowding.py run_market_snapshot_v2.py run_market_snapshot_v3.py run_market_snapshot_v4.py run_market_snapshot_v5.py run_market_snapshot_v6.py run_market_snapshot_v7.py run_market_snapshot_v9.py
+      - name: Build 2026-08-03 market snapshot
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          python run_market_snapshot_v9.py --target-date 20260803 --workers 32 2>&1 | tee data/market_snapshot_fast_run_20260803.log
+      - name: Upload market snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-snapshot-fast-20260803
+          path: |
+            data/*20260803.csv
+            data/market_daily_history.csv
+            data/market_snapshot_fast_run_20260803.log
+          if-no-files-found: warn
