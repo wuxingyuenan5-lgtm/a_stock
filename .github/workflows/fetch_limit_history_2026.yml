@@ -1,0 +1,43 @@
+name: Fetch 2026 Limit History
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - fetch_limit_history_2026.py
+      - .github/workflows/fetch_limit_history_2026.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: daily-market-20260804
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile fetch_limit_history_2026.py
+      - name: Fetch limit history
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          python fetch_limit_history_2026.py --start-date 20260101 --end-date 20260804 2>&1 | tee data/limit_history_run_2026.log
+      - name: Upload limit history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: limit-history-2026
+          path: |
+            data/limit_history_2026.csv
+            data/limit_history_quality_2026.csv
+            data/limit_history_errors_2026.csv
+            data/limit_history_run_2026.log
+          if-no-files-found: warn
