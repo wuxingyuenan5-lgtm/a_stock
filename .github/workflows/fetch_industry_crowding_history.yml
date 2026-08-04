@@ -1,0 +1,56 @@
+name: Fetch Industry Crowding History
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - optimize-market-dashboard-v1
+    paths:
+      - fetch_industry_crowding_history.py
+      - fetch_sw_crowding_history.py
+      - backfill_market_and_crowding.py
+      - .github/workflows/fetch_industry_crowding_history.yml
+  pull_request:
+    paths:
+      - fetch_industry_crowding_history.py
+      - fetch_sw_crowding_history.py
+      - backfill_market_and_crowding.py
+      - .github/workflows/fetch_industry_crowding_history.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fetch-industry-crowding-history
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile fetch_sw_crowding_history.py update_sw_industry.py
+      - name: Fetch official Shenwan L2 crowding history
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          python fetch_sw_crowding_history.py --start-date 20260101 --end-date 20260803 2>&1 | tee data/sw_crowding_official_run.log
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sw-crowding-official-history-2026
+          path: |
+            data/sw_crowding_official_history_2026.csv
+            data/sw_crowding_official_quality_2026.csv
+            data/sw_crowding_official_run.log
+          if-no-files-found: warn

@@ -1,14 +1,24 @@
 name: Update Shenwan Industry Data
 
-# Manual refresh marker: 2026-07-29
 on:
   workflow_dispatch:
+    inputs:
+      target_date:
+        description: "Trading date in YYYYMMDD"
+        required: true
+        default: "20260730"
   pull_request:
+    paths:
+      - update_sw_industry.py
+      - update_sw_industry_current.py
+      - requirements.txt
+      - .github/workflows/update_sw_industry.yml
   push:
     branches:
       - main
     paths:
       - update_sw_industry.py
+      - update_sw_industry_current.py
       - requirements.txt
       - .github/workflows/update_sw_industry.yml
 
@@ -19,7 +29,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: write
 
@@ -36,17 +46,30 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Validate script
-        run: python -m py_compile update_sw_industry.py
+      - name: Validate scripts
+        run: python -m py_compile update_sw_industry.py update_sw_industry_current.py
 
-      - name: Update industry data
+      - name: Resolve target date
+        id: target
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "date=${{ inputs.target_date }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "date=20260730" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update historical base
         run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20
+
+      - name: Build exact-date current snapshot
+        run: python update_sw_industry_current.py --target-date "${{ steps.target.outputs.date }}"
 
       - name: Upload generated CSV files
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sw-industry-data
+          name: sw-industry-data-${{ steps.target.outputs.date }}
           path: data/*.csv
           if-no-files-found: warn
 

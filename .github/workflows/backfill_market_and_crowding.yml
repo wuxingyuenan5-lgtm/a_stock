@@ -1,0 +1,87 @@
+name: Backfill Market Breadth and Crowding
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - optimize-market-dashboard-v1
+    paths:
+      - backfill_market_and_crowding.py
+      - run_backfill_market_and_crowding.py
+      - data/bse_security_master.csv
+      - .github/workflows/backfill_market_and_crowding.yml
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - backfill_market_and_crowding.py
+      - run_backfill_market_and_crowding.py
+      - data/bse_security_master.csv
+      - .github/workflows/backfill_market_and_crowding.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backfill-market-crowding-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install baostock
+      - name: Validate scripts
+        run: python -m py_compile backfill_market_and_crowding.py run_backfill_market_and_crowding.py
+      - name: Backfill 2026 history
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          status=1
+          for attempt in 1 2 3; do
+            echo "Backfill attempt ${attempt}"
+            rm -rf data/backfill_parts
+            mkdir -p data/backfill_parts
+            python run_backfill_market_and_crowding.py --start-date 2026-01-01 --end-date 2026-07-31 --workers 4 --limit-workers 6 2>&1 | tee data/backfill_run.log
+            status=${PIPESTATUS[0]}
+            if [ "$status" -eq 0 ]; then
+              break
+            fi
+            sleep 45
+          done
+          exit "$status"
+      - name: Commit successful backfill outputs
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/market_daily_history_backfilled.csv data/industry_crowding_history.csv data/backfill_quality.csv
+          if git diff --cached --quiet; then
+            echo "No backfill changes"
+          else
+            git commit -m "data: backfill 2026 market breadth and crowding"
+            git push origin HEAD:optimize-market-dashboard-v1
+          fi
+      - name: Upload backfill artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-history-and-crowding-2026
+          path: |
+            data/market_daily_history_backfilled.csv
+            data/industry_crowding_history.csv
+            data/backfill_quality.csv
+            data/backfill_run.log
+            data/backfill_parts/*.csv
+          if-no-files-found: warn

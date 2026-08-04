@@ -1,0 +1,56 @@
+name: Update Market 20260803 Cached
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - run_market_snapshot_v11.py
+      - .github/workflows/update_market_20260803_cached.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Download verified 2026-07-31 universe cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p data/cache_20260731
+          curl --fail --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/wuxingyuenan5-lgtm/a_stock/actions/artifacts/8790103839/zip" \
+            --output /tmp/market-20260731.zip
+          unzip -q /tmp/market-20260731.zip -d data/cache_20260731
+          test -f data/cache_20260731/market_filtered_stocks_20260731.csv
+      - run: python -m py_compile build_market_snapshot.py run_market_snapshot_v2.py run_market_snapshot_v3.py run_market_snapshot_v4.py run_market_snapshot_v5.py run_market_snapshot_v6.py run_market_snapshot_v10.py run_market_snapshot_v11.py
+      - name: Build 2026-08-03 market snapshot
+        shell: bash
+        run: |
+          set -o pipefail
+          python run_market_snapshot_v11.py --target-date 20260803 --workers 32 2>&1 | tee data/market_snapshot_cached_run_20260803.log
+      - name: Upload market snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-snapshot-cached-20260803
+          path: |
+            data/*20260803.csv
+            data/market_daily_history.csv
+            data/market_snapshot_cached_run_20260803.log
+          if-no-files-found: warn
