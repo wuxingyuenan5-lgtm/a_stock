@@ -4,10 +4,6 @@ on:
   push:
     branches:
       - chatgpt/a-monitor-20260805-actual
-    paths:
-      - build_monitor_20260805.py
-      - resume_monitor_20260805.py
-      - .github/workflows/chatgpt_monitor_20260805.yml
   pull_request:
     branches:
       - main
@@ -18,53 +14,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  current:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    permissions:
-      contents: write
-
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install requests baostock
-
-      - name: Refresh Shenwan official data
-        continue-on-error: true
-        run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20 --workers 4
-
-      - name: Build market and historical completion data
-        run: python resume_monitor_20260805.py
-
-      - name: Upload generated data
+        run: pip install -r requirements.txt
+      - name: Build current-day data
+        run: python current_monitor_20260805.py
+      - name: Upload current-day data
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: a-monitor-20260805-data
-          path: |
-            data/monitor_20260805
-            data/sw_industry_history.csv
-            data/sw_industry_latest.csv
-            data/sw_industry_failures.csv
-          if-no-files-found: warn
+          name: a-monitor-20260805-current
+          path: data/monitor_20260805
+          if-no-files-found: error
 
-      - name: Commit generated data
-        if: github.event_name != 'pull_request'
+  history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/monitor_20260805 data/sw_industry_history.csv data/sw_industry_latest.csv data/sw_industry_failures.csv || true
-          if git diff --cached --quiet; then
-            echo "No generated data changes"
-            exit 0
-          fi
-          git commit -m "data: build A-share monitor for 2026-08-05"
-          git push
+          pip install -r requirements.txt
+          pip install baostock
+      - name: Build historical hundred-billion data
+        run: python history_monitor_20260805.py
+      - name: Upload historical data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-monitor-20260805-history
+          path: data/monitor_20260805
+          if-no-files-found: warn
