@@ -1,0 +1,29 @@
+name: Beijing A-share Snapshot 20260805
+
+on:
+  push:
+    branches:
+      - chatgpt/a-monitor-tencent-fast
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python bj_snapshot_20260805.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-monitor-20260805-bj
+          path: data/bj_snapshot_20260805
+          if-no-files-found: error
