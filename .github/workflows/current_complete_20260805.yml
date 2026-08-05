@@ -5,7 +5,7 @@ on:
     branches:
       - chatgpt/a-monitor-current-complete
     paths:
-      - current_curl_20260805.py
+      - current_tencent_batch_20260805.py
       - .github/workflows/current_complete_20260805.yml
   pull_request:
     branches:
@@ -15,7 +15,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,13 +23,15 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Build complete curl-cffi snapshot
-        run: python current_curl_20260805.py
+        run: |
+          pip install -r requirements.txt
+          pip install baostock
+      - name: Build complete Tencent batch snapshot
+        run: python current_tencent_batch_20260805.py
       - name: Upload complete snapshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: a-monitor-20260805-current-curl
-          path: data/current_curl_20260805
+          name: a-monitor-20260805-current-tencent
+          path: data/current_tencent_batch_20260805
           if-no-files-found: error
