@@ -6,6 +6,7 @@ on:
       - chatgpt/a-monitor-20260805-actual
     paths:
       - build_monitor_20260805.py
+      - resume_monitor_20260805.py
       - .github/workflows/chatgpt_monitor_20260805.yml
   pull_request:
     branches:
@@ -41,7 +42,7 @@ jobs:
         run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20 --workers 4
 
       - name: Build market and historical completion data
-        run: python build_monitor_20260805.py --target-date 20260805 --history-start 20260105
+        run: python resume_monitor_20260805.py
 
       - name: Upload generated data
         if: always()
