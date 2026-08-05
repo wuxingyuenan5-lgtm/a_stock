@@ -5,7 +5,7 @@ on:
     branches:
       - chatgpt/a-monitor-current-complete
     paths:
-      - current_complete_20260805.py
+      - current_akshare_20260805.py
       - .github/workflows/current_complete_20260805.yml
   pull_request:
     branches:
@@ -24,12 +24,12 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Build complete paginated snapshot
-        run: python current_complete_20260805.py
+      - name: Build complete AKShare snapshot
+        run: python current_akshare_20260805.py
       - name: Upload complete snapshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: a-monitor-20260805-current-complete
-          path: data/current_complete_20260805
+          name: a-monitor-20260805-current-akshare
+          path: data/current_akshare_20260805
           if-no-files-found: error
