@@ -7,6 +7,9 @@ on:
     paths:
       - build_monitor_20260805.py
       - .github/workflows/chatgpt_monitor_20260805.yml
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -40,7 +43,20 @@ jobs:
       - name: Build market and historical completion data
         run: python build_monitor_20260805.py --target-date 20260805 --history-start 20260105
 
+      - name: Upload generated data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-monitor-20260805-data
+          path: |
+            data/monitor_20260805
+            data/sw_industry_history.csv
+            data/sw_industry_latest.csv
+            data/sw_industry_failures.csv
+          if-no-files-found: warn
+
       - name: Commit generated data
+        if: github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
