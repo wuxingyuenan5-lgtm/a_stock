@@ -7,6 +7,9 @@ on:
     paths:
       - current_complete_20260805.py
       - .github/workflows/current_complete_20260805.yml
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
