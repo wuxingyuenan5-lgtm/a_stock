@@ -35,6 +35,27 @@ jobs:
           path: data/monitor_20260805
           if-no-files-found: error
 
+  choice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Fetch Choice microcap history
+        run: python choice_history_2026.py
+      - name: Upload Choice data or error record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-monitor-20260805-choice
+          path: data/monitor_20260805
+          if-no-files-found: warn
+
   early-limits:
     runs-on: ubuntu-latest
     timeout-minutes: 30
