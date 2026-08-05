@@ -1,0 +1,31 @@
+name: Fast Tencent Batch Snapshot 20260805
+
+on:
+  push:
+    branches:
+      - chatgpt/a-monitor-tencent-fast
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          pip install -r requirements.txt
+          pip install baostock
+      - run: python tencent_batch_fast_20260805.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-monitor-20260805-tencent-fast
+          path: data/tencent_batch_fast_20260805
+          if-no-files-found: error
