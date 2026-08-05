@@ -1,0 +1,53 @@
+name: Build A-share Monitor 20260805
+
+on:
+  push:
+    branches:
+      - chatgpt/a-monitor-20260805-actual
+    paths:
+      - build_monitor_20260805.py
+      - .github/workflows/chatgpt_monitor_20260805.yml
+  workflow_dispatch:
+
+concurrency:
+  group: chatgpt-monitor-20260805-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install requests baostock
+
+      - name: Refresh Shenwan official data
+        continue-on-error: true
+        run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20 --workers 4
+
+      - name: Build market and historical completion data
+        run: python build_monitor_20260805.py --target-date 20260805 --history-start 20260105
+
+      - name: Commit generated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/monitor_20260805 data/sw_industry_history.csv data/sw_industry_latest.csv data/sw_industry_failures.csv || true
+          if git diff --cached --quiet; then
+            echo "No generated data changes"
+            exit 0
+          fi
+          git commit -m "data: build A-share monitor for 2026-08-05"
+          git push
