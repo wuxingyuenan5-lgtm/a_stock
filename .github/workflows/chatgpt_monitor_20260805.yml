@@ -16,6 +16,27 @@ concurrency:
 jobs:
   current:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build fast current-day data
+        run: python current_fast_20260805.py
+      - name: Upload current-day data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-monitor-20260805-current
+          path: data/monitor_20260805
+          if-no-files-found: error
+
+  early-limits:
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -25,15 +46,15 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Build current-day data
-        run: python current_monitor_20260805.py
-      - name: Upload current-day data
+      - name: Fill early limit-count gaps
+        run: python early_limits_202601.py
+      - name: Upload early limit data
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: a-monitor-20260805-current
+          name: a-monitor-20260805-early-limits
           path: data/monitor_20260805
-          if-no-files-found: error
+          if-no-files-found: warn
 
   history:
     runs-on: ubuntu-latest
