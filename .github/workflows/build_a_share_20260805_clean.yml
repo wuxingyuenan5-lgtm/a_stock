@@ -1,0 +1,11 @@
+name: Temporary trigger marker
+
+on:
+  workflow_dispatch:
+
+jobs:
+  noop:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo trigger
