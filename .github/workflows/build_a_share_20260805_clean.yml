@@ -1,8 +1,9 @@
 name: Trigger 20260805 Snapshot
 on:
   workflow_dispatch:
+# trigger v11 market run
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo trigger
+      - run: echo trigger-v11
