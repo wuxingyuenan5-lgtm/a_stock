@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
 
+# second push trigger after workflow registration
 jobs:
   market:
     runs-on: ubuntu-latest
