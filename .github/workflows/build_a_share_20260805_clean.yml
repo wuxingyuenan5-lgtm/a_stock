@@ -1,9 +1,9 @@
 name: Trigger 20260806 Snapshot
 on:
   workflow_dispatch:
-# trigger exact-date 2026-08-06 historical core build
+# trigger exact-date 2026-08-06 fast market build v2
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo trigger-20260806
+      - run: echo trigger-20260806-v2
