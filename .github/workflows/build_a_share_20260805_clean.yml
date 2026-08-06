@@ -1,9 +1,9 @@
 name: Trigger 20260805 Snapshot
 on:
   workflow_dispatch:
-# trigger focused one-day historical build
+# trigger TDX official daily archive build
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo trigger-history
+      - run: echo trigger-tdx
