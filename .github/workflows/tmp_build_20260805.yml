@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 jobs:
-  market:
+  market_fast:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,53 +26,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python run_market_snapshot_v7.py --target-date 20260805 --workers 32
+      - run: python run_market_snapshot_v11.py --target-date 20260805 --workers 32
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: market-snapshot-20260805
+          name: market-snapshot-v11-20260805
           path: |
             data/*20260805.csv
             data/market_daily_history.csv
-          if-no-files-found: warn
-
-  shenwan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: optimize-market-dashboard-v1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.12
-      - run: python update_sw_industry_current.py --target-date 20260805
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sw-industry-data-20260805
-          path: data/*.csv
-          if-no-files-found: warn
-
-  crowding:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: optimize-market-dashboard-v1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - run: python update_crowding_daily_v3.py --target-date 20260805
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: crowding-current-20260805
-          path: data/industry_crowding_daily_20260805.csv
           if-no-files-found: warn
