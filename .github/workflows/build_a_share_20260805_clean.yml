@@ -1,9 +1,9 @@
 name: Trigger 20260805 Snapshot
 on:
   workflow_dispatch:
-# trigger v12 official-universe market run
+# trigger focused one-day historical build
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo trigger-v12
+      - run: echo trigger-history
