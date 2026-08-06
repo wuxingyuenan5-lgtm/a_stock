@@ -5,12 +5,15 @@ on:
     branches: [main]
     paths:
       - .github/workflows/tmp_build_20260805.yml
+  pull_request:
+    paths:
+      - .github/workflows/build_a_share_20260805_clean.yml
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# temporary direct trigger for exact-date 2026-08-06 fast snapshot
+# temporary exact-date 2026-08-06 fast snapshot
 jobs:
   market_tdx:
     runs-on: ubuntu-latest
