@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  market_fast:
+  market_tdx:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -26,12 +26,10 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python run_market_snapshot_v12.py --target-date 20260805 --workers 32
+      - run: python build_tdx_snapshot_20260805.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: market-snapshot-v12-20260805
-          path: |
-            data/*20260805.csv
-            data/market_daily_history.csv
+          name: market-snapshot-tdx-20260805
+          path: data/*20260805.csv
           if-no-files-found: warn
