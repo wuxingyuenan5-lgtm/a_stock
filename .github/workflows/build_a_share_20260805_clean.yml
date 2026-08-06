@@ -1,0 +1,94 @@
+name: Build A-share Snapshot 20260805 Clean
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/build_a_share_20260805_clean.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile build_market_snapshot.py backfill_market_and_crowding.py run_market_snapshot_v2.py run_market_snapshot_v3.py run_market_snapshot_v4.py run_market_snapshot_v5.py run_market_snapshot_v6.py run_market_snapshot_v7.py
+      - name: Build 2026-08-05 market snapshot
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          python run_market_snapshot_v7.py --target-date 20260805 --workers 32 2>&1 | tee data/market_snapshot_run_20260805.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-snapshot-20260805
+          path: |
+            data/*20260805.csv
+            data/market_daily_history.csv
+            data/market_snapshot_run_20260805.log
+          if-no-files-found: warn
+
+  shenwan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.12
+      - name: Build 2026-08-05 Shenwan snapshot
+        shell: bash
+        run: |
+          set -o pipefail
+          python update_sw_industry_current.py --target-date 20260805 2>&1 | tee data/sw_industry_run_20260805.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sw-industry-data-20260805
+          path: |
+            data/*.csv
+            data/sw_industry_run_20260805.log
+          if-no-files-found: warn
+
+  crowding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Build 2026-08-05 crowding row
+        shell: bash
+        run: |
+          mkdir -p data
+          set -o pipefail
+          python update_crowding_daily_v3.py --target-date 20260805 2>&1 | tee data/crowding_run_20260805.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crowding-current-20260805
+          path: |
+            data/industry_crowding_daily_20260805.csv
+            data/crowding_run_20260805.log
+          if-no-files-found: warn
