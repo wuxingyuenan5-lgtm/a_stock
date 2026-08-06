@@ -11,31 +11,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
-# temporary exact-date 2026-08-06 fast snapshot
 jobs:
   market_tdx:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           ref: optimize-market-dashboard-v1
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
       - run: python build_tdx_snapshot_20260805.py
-      - name: Commit exact-date CSV files to audit branch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/*20260805.csv
-          git commit -m "Add exact 2026-08-06 market snapshot" || exit 0
-          git push origin HEAD:optimize-market-dashboard-v1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
