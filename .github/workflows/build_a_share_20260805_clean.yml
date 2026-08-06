@@ -1,9 +1,9 @@
-name: Trigger 20260805 Snapshot
+name: Trigger 20260806 Snapshot
 on:
   workflow_dispatch:
-# trigger TDX official daily archive build
+# trigger exact-date 2026-08-06 historical core build
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo trigger-tdx
+      - run: echo trigger-20260806
