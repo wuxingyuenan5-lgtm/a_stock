@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
 
+# trigger after default-branch workflow registration
 jobs:
   market:
     runs-on: ubuntu-latest
