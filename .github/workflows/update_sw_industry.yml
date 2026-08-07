@@ -1,6 +1,6 @@
 name: Update Shenwan Industry Data
 
-# Manual refresh marker: 2026-08-04 16:00 CST
+# Manual refresh marker: 2026-08-07 16:03 CST
 on:
   workflow_dispatch:
   pull_request:
