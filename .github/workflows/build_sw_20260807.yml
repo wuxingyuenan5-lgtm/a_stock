@@ -1,0 +1,42 @@
+name: Build Shenwan Snapshot 20260807
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/build_sw_20260807.yml
+      - update_sw_industry.py
+      - update_sw_industry_current.py
+      - requirements.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shenwan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile update_sw_industry.py update_sw_industry_current.py
+      - name: Build exact-date Shenwan snapshot
+        shell: bash
+        run: |
+          set -o pipefail
+          python update_sw_industry_current.py --target-date 20260807 2>&1 | tee data/sw_industry_run_20260807.log
+      - name: Upload Shenwan snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sw-industry-exact-20260807
+          path: |
+            data/sw_industry_current_20260807.csv
+            data/sw_industry_enhanced_history_20260807.csv
+            data/sw_industry_current_quality_20260807.csv
+            data/sw_industry_run_20260807.log
+          if-no-files-found: warn
