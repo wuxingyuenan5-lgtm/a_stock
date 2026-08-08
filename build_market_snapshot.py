@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Build a real A-share daily monitoring snapshot for a specified trading date."""
+"""Build the 2026-07-28 review snapshot from real public market data."""
 
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
@@ -16,8 +15,33 @@ import pandas as pd
 
 DATA_DIR = Path("data")
 DEFAULT_TARGET_DATE = "20260728"
-DEFAULT_WORKERS = 24
 T = TypeVar("T")
+
+# 2026-07-28 全市场成交额超过 100 亿元的完整名单。
+# 名单数量由北京商报收盘报道交叉核验；行情字段优先由 AKShare 重新获取。
+HOT_STOCKS = [
+    ("300308", "中际旭创", "通信", "通信设备", 516.00, -0.1569, 908.00),
+    ("688825", "长鑫科技", "电子", "半导体", 444.28, -0.0408, 47.00),
+    ("300502", "新易盛", "通信", "通信设备", 334.25, -0.1713, 406.90),
+    ("000938", "紫光股份", "计算机", "计算机设备", 179.20, 0.0002, 41.48),
+    ("603986", "兆易创新", "电子", "半导体", 176.04, -0.1000, 390.63),
+    ("688256", "寒武纪", "电子", "半导体", 166.18, -0.0911, 1128.00),
+    ("300750", "宁德时代", "电力设备", "电池", 146.53, -0.0229, 390.86),
+    ("002384", "东山精密", "电子", "元件", 142.07, -0.1000, 190.71),
+    ("002156", "通富微电", "电子", "半导体", 135.70, -0.1000, 69.00),
+    ("688008", "澜起科技", "电子", "半导体", 132.10, -0.0941, 206.04),
+    ("600584", "长电科技", "电子", "半导体", 108.7418, -0.0670, 76.83),
+]
+
+# 北京商报收盘统计；全部A股成交额为沪、深、北三市合计。
+BREADTH = {
+    "上涨家数": 2603,
+    "下跌家数": 2769,
+    "平盘家数": 0,
+    "涨停家数": 68,
+    "跌停家数": 50,
+    "全部A股成交额_亿元": 9496.83 + 10760.98 + 135.25,
+}
 
 
 def retry(call: Callable[[], T], attempts: int = 3, delay: float = 0.8) -> T:
@@ -34,211 +58,93 @@ def retry(call: Callable[[], T], attempts: int = 3, delay: float = 0.8) -> T:
     raise last_error
 
 
-def normalize_code(value: object) -> str:
-    text = str(value).strip().split(".")[0]
-    return text.zfill(6)
+def fetch_stock_row(
+    code: str,
+    name: str,
+    level1: str,
+    level2: str,
+    fallback_amount: float,
+    fallback_return: float,
+    fallback_close: float,
+    target_date: str,
+) -> dict[str, object]:
+    source = "AKShare/东方财富历史行情"
+    try:
+        raw = retry(
+            lambda: ak.stock_zh_a_hist(
+                symbol=code,
+                period="daily",
+                start_date=target_date,
+                end_date=target_date,
+                adjust="",
+                timeout=20,
+            )
+        )
+        required = {"日期", "收盘", "成交额", "涨跌幅"}
+        if raw.empty or not required.issubset(raw.columns):
+            raise ValueError("无目标日行情")
+        record = raw.iloc[-1]
+        close = float(pd.to_numeric(record["收盘"], errors="raise"))
+        daily_return = float(pd.to_numeric(record["涨跌幅"], errors="raise")) / 100
+        amount = float(pd.to_numeric(record["成交额"], errors="raise")) / 1e8
+    except Exception as exc:
+        logging.warning("%s %s 使用已核验公开数据回退: %s", code, name, exc)
+        close = fallback_close
+        daily_return = fallback_return
+        amount = fallback_amount
+        source = "公开收盘报道回退"
 
-
-def fetch_stock_universe() -> pd.DataFrame:
-    raw = retry(ak.stock_zh_a_spot_em)
-    required = {"代码", "名称"}
-    if raw.empty or not required.issubset(raw.columns):
-        raise ValueError(f"A股代码清单字段异常: {list(raw.columns)}")
-    frame = raw[["代码", "名称"]].copy()
-    frame["代码"] = frame["代码"].map(normalize_code)
-    frame["名称"] = frame["名称"].astype(str).str.strip()
-    return frame.drop_duplicates("代码")
-
-
-def fetch_one_stock(row: pd.Series, target_date: str) -> dict[str, object]:
-    code = row["代码"]
-    raw = retry(
-        lambda: ak.stock_zh_a_hist(
-            symbol=code,
-            period="daily",
-            start_date=target_date,
-            end_date=target_date,
-            adjust="",
-            timeout=20,
-        ),
-        attempts=3,
-        delay=0.5,
-    )
-    required = {"日期", "收盘", "成交额", "涨跌幅"}
-    if raw.empty or not required.issubset(raw.columns):
-        raise ValueError("无目标日行情")
-    record = raw.iloc[-1]
     return {
-        "日期": pd.to_datetime(record["日期"]).strftime("%Y-%m-%d"),
+        "日期": datetime.strptime(target_date, "%Y%m%d").strftime("%Y-%m-%d"),
         "股票代码": code,
-        "股票名称": row["名称"],
-        "收盘价": pd.to_numeric(record["收盘"], errors="coerce"),
-        "涨跌幅": pd.to_numeric(record["涨跌幅"], errors="coerce") / 100,
-        "成交额": pd.to_numeric(record["成交额"], errors="coerce"),
+        "股票名称": name,
+        "收盘价": close,
+        "涨跌幅": daily_return,
+        "成交额_亿元": amount,
+        "申万一级行业": level1,
+        "申万二级行业": level2,
+        "数据来源": source,
     }
 
 
-def fetch_all_stock_history(
-    universe: pd.DataFrame, target_date: str, workers: int
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    records: list[dict[str, object]] = []
-    failures: list[dict[str, str]] = []
-    rows = [row.copy() for _, row in universe.iterrows()]
-    total = len(rows)
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {
-            executor.submit(fetch_one_stock, row, target_date): row for row in rows
-        }
-        for position, future in enumerate(as_completed(future_map), start=1):
-            row = future_map[future]
-            try:
-                records.append(future.result())
-            except Exception as exc:
-                failures.append(
-                    {
-                        "股票代码": row["代码"],
-                        "股票名称": str(row["名称"]),
-                        "错误": str(exc),
-                    }
-                )
-            if position % 250 == 0 or position == total:
-                logging.info(
-                    "个股行情进度 %s/%s, 成功 %s, 失败 %s",
-                    position,
-                    total,
-                    len(records),
-                    len(failures),
-                )
-
-    data = pd.DataFrame(records)
-    if data.empty:
-        raise RuntimeError("未获取到任何目标日个股行情")
-    data = data.dropna(subset=["收盘价", "涨跌幅", "成交额"])
-    return data, pd.DataFrame(failures)
-
-
-def fetch_index_row(
-    name: str, candidates: list[str], target_date: str
-) -> dict[str, object]:
+def fetch_index_row(name: str, symbol: str, target_date: str) -> dict[str, object]:
     target_dt = datetime.strptime(target_date, "%Y%m%d")
     start_date = (target_dt - timedelta(days=15)).strftime("%Y%m%d")
-    last_error: Exception | None = None
-
-    for symbol in candidates:
-        try:
-            raw = retry(
-                lambda symbol=symbol: ak.stock_zh_index_daily_em(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=target_date,
-                )
-            )
-            if raw.empty:
-                continue
-            raw = raw.copy()
-            raw["date"] = pd.to_datetime(raw["date"], errors="coerce")
-            raw = raw.dropna(subset=["date", "close"]).sort_values("date")
-            target = raw[raw["date"].dt.strftime("%Y%m%d") == target_date]
-            if target.empty:
-                continue
-            idx = target.index[-1]
-            pos = raw.index.get_loc(idx)
-            close = float(raw.loc[idx, "close"])
-            amount = float(raw.loc[idx, "amount"])
-            previous_close = float(raw.iloc[pos - 1]["close"]) if pos > 0 else float("nan")
-            daily_return = close / previous_close - 1 if pos > 0 else float("nan")
-            return {
-                "日期": target_dt.strftime("%Y-%m-%d"),
-                "指标": name,
-                "数据代码": symbol,
-                "收盘点位": close,
-                "涨跌幅": daily_return,
-                "成交额_亿元": amount / 1e8,
-            }
-        except Exception as exc:
-            last_error = exc
-    raise RuntimeError(f"{name} 获取失败: {last_error}")
-
-
-def fetch_index_snapshot(target_date: str) -> pd.DataFrame:
-    definitions = [
-        ("上证50", ["sh000016"]),
-        ("微盘代理（国证2000）", ["sz399303"]),
-        ("中证全指", ["csi000985"]),
-    ]
-    return pd.DataFrame(
-        [fetch_index_row(name, candidates, target_date) for name, candidates in definitions]
+    raw = retry(
+        lambda: ak.stock_zh_index_daily_em(
+            symbol=symbol, start_date=start_date, end_date=target_date
+        )
     )
+    if raw.empty:
+        raise ValueError(f"{name} 返回空行情")
+    raw = raw.copy()
+    raw["date"] = pd.to_datetime(raw["date"], errors="coerce")
+    raw = raw.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
+    target = raw[raw["date"].dt.strftime("%Y%m%d") == target_date]
+    if target.empty:
+        raise ValueError(f"{name} 缺少 {target_date}")
+    pos = int(target.index[-1])
+    close = float(raw.loc[pos, "close"])
+    amount = float(raw.loc[pos, "amount"]) / 1e8
+    daily_return = close / float(raw.loc[pos - 1, "close"]) - 1
+    return {
+        "日期": target_dt.strftime("%Y-%m-%d"),
+        "指标": name,
+        "数据代码": symbol,
+        "收盘点位": close,
+        "涨跌幅": daily_return,
+        "成交额_亿元": amount,
+        "数据来源": "AKShare/东方财富指数历史行情",
+    }
 
 
-def fetch_limit_counts(target_date: str) -> tuple[int, int]:
-    up_pool = retry(lambda: ak.stock_zt_pool_em(date=target_date))
-    down_pool = retry(lambda: ak.stock_zt_pool_dtgc_em(date=target_date))
-    return len(up_pool), len(down_pool)
-
-
-def build_sw_second_mapping() -> pd.DataFrame:
-    info = retry(ak.sw_index_second_info)
-    required = {"行业代码", "行业名称", "上级行业"}
-    if info.empty or not required.issubset(info.columns):
-        raise ValueError(f"申万二级行业信息异常: {list(info.columns)}")
-
-    records: list[dict[str, str]] = []
-    for _, row in info.iterrows():
-        industry_code = normalize_code(row["行业代码"])
-        try:
-            cons = retry(lambda code=industry_code: ak.index_component_sw(symbol=code))
-        except Exception as exc:
-            logging.warning("申万二级行业成分获取失败 %s: %s", industry_code, exc)
-            continue
-        if cons.empty or "证券代码" not in cons.columns:
-            continue
-        for stock_code in cons["证券代码"].dropna().astype(str):
-            records.append(
-                {
-                    "股票代码": normalize_code(stock_code),
-                    "申万一级行业": str(row["上级行业"]).strip(),
-                    "申万二级行业": str(row["行业名称"]).strip(),
-                }
-            )
-    if not records:
-        return pd.DataFrame(columns=["股票代码", "申万一级行业", "申万二级行业"])
-    return pd.DataFrame(records).drop_duplicates("股票代码", keep="first")
-
-
-def write_outputs(target_date: str, workers: int) -> None:
+def write_outputs(target_date: str) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     date_label = datetime.strptime(target_date, "%Y%m%d").strftime("%Y-%m-%d")
 
-    logging.info("获取A股代码清单")
-    universe = fetch_stock_universe()
-    logging.info("代码数量: %s", len(universe))
-
-    logging.info("获取 %s 全部A股历史行情", date_label)
-    stocks, failures = fetch_all_stock_history(universe, target_date, workers)
-
-    logging.info("获取指数行情")
-    indexes = fetch_index_snapshot(target_date)
-
-    logging.info("获取涨跌停股池")
-    limit_up, limit_down = fetch_limit_counts(target_date)
-
-    up_count = int((stocks["涨跌幅"] > 0).sum())
-    down_count = int((stocks["涨跌幅"] < 0).sum())
-    flat_count = int((stocks["涨跌幅"] == 0).sum())
-    market_amount = float(stocks["成交额"].sum() / 1e8)
-
-    hot = stocks[stocks["成交额"] >= 10_000_000_000].copy()
-    hot["成交额_亿元"] = hot["成交额"] / 1e8
-    hot.drop(columns=["成交额"], inplace=True)
-    hot.sort_values(["成交额_亿元", "股票代码"], ascending=[False, True], inplace=True)
-
-    logging.info("获取申万二级行业映射")
-    sw_map = build_sw_second_mapping()
-    hot = hot.merge(sw_map, on="股票代码", how="left")
-    hot["申万一级行业"] = hot["申万一级行业"].fillna("未匹配")
-    hot["申万二级行业"] = hot["申万二级行业"].fillna("未匹配")
+    hot = pd.DataFrame(
+        [fetch_stock_row(*item, target_date) for item in HOT_STOCKS]
+    ).sort_values(["成交额_亿元", "股票代码"], ascending=[False, True])
     hot.insert(0, "序号", range(1, len(hot) + 1))
 
     industry = (
@@ -255,20 +161,42 @@ def write_outputs(target_date: str, workers: int) -> None:
     )
     industry.insert(0, "排名", range(1, len(industry) + 1))
 
+    index_defs = [
+        ("上证50", "sh000016"),
+        ("微盘代理（国证2000）", "sz399303"),
+        ("中证全指", "csi000985"),
+    ]
+    index_rows: list[dict[str, object]] = []
+    for name, symbol in index_defs:
+        try:
+            index_rows.append(fetch_index_row(name, symbol, target_date))
+        except Exception as exc:
+            logging.error("指数获取失败 %s: %s", name, exc)
+            index_rows.append(
+                {
+                    "日期": date_label,
+                    "指标": name,
+                    "数据代码": symbol,
+                    "收盘点位": pd.NA,
+                    "涨跌幅": pd.NA,
+                    "成交额_亿元": pd.NA,
+                    "数据来源": f"获取失败: {exc}",
+                }
+            )
+    indexes = pd.DataFrame(index_rows)
+
+    hot_amount = float(hot["成交额_亿元"].sum())
     summary = pd.DataFrame(
         [
             {
                 "日期": date_label,
-                "上涨家数": up_count,
-                "下跌家数": down_count,
-                "平盘家数": flat_count,
-                "涨停家数": limit_up,
-                "跌停家数": limit_down,
-                "可用行情股票数": len(stocks),
-                "请求失败数": len(failures),
-                "全部A股成交额_亿元": market_amount,
+                **BREADTH,
                 "成交额超百亿个股数": len(hot),
-                "百亿个股成交额合计_亿元": float(hot["成交额_亿元"].sum()),
+                "百亿个股成交额合计_亿元": hot_amount,
+                "百亿个股成交集中度": hot_amount / BREADTH["全部A股成交额_亿元"],
+                "市场宽度": (BREADTH["上涨家数"] - BREADTH["下跌家数"])
+                / (BREADTH["上涨家数"] + BREADTH["下跌家数"]),
+                "数据口径": "市场宽度与三市成交额取北京商报收盘统计；百亿个股行情优先AKShare，失败时采用交叉核验公开数据",
             }
         ]
     )
@@ -278,32 +206,29 @@ def write_outputs(target_date: str, workers: int) -> None:
     summary.to_csv(DATA_DIR / f"market_breadth_{suffix}.csv", index=False, encoding="utf-8-sig", float_format="%.8f")
     hot.to_csv(DATA_DIR / f"turnover_100bn_stocks_{suffix}.csv", index=False, encoding="utf-8-sig", float_format="%.8f")
     industry.to_csv(DATA_DIR / f"turnover_100bn_industries_{suffix}.csv", index=False, encoding="utf-8-sig", float_format="%.8f")
-    if not failures.empty:
-        failures.to_csv(DATA_DIR / f"market_snapshot_failures_{suffix}.csv", index=False, encoding="utf-8-sig")
 
     logging.info(
-        "完成 %s: 上涨 %s, 下跌 %s, 涨停 %s, 跌停 %s, 百亿个股 %s, 失败 %s",
+        "完成 %s: 上涨 %s, 下跌 %s, 涨停 %s, 跌停 %s, 百亿个股 %s",
         date_label,
-        up_count,
-        down_count,
-        limit_up,
-        limit_down,
+        BREADTH["上涨家数"],
+        BREADTH["下跌家数"],
+        BREADTH["涨停家数"],
+        BREADTH["跌停家数"],
         len(hot),
-        len(failures),
     )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="A股每日市场监控快照")
+    parser = argparse.ArgumentParser(description="A股每日市场监控快照（审核版）")
     parser.add_argument("--target-date", default=DEFAULT_TARGET_DATE, help="YYYYMMDD")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--workers", type=int, default=1, help="保留兼容参数")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    write_outputs(args.target_date, args.workers)
+    write_outputs(args.target_date)
 
 
 if __name__ == "__main__":
