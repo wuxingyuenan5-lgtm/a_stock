@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import akshare as ak
@@ -9,13 +8,7 @@ import pandas as pd
 from .common import ensure_dir, normalize_code, retry
 
 DEFAULT_MAPPING_PATH = Path("data/cache/sw_stock_mapping.csv")
-
-
-def _mapping_age_days(path: Path) -> float:
-    if not path.exists():
-        return 99999
-    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-    return (datetime.now(timezone.utc) - modified).total_seconds() / 86400
+MAPPING_COLUMNS = ["stock_code", "sw_level1", "sw_level2", "sw_level2_code"]
 
 
 def build_mapping() -> pd.DataFrame:
@@ -42,13 +35,20 @@ def build_mapping() -> pd.DataFrame:
             })
     if not records:
         raise RuntimeError("申万二级成分映射为空")
-    return pd.DataFrame(records).drop_duplicates("stock_code", keep="first")
+    return pd.DataFrame(records, columns=MAPPING_COLUMNS).drop_duplicates("stock_code", keep="first")
 
 
-def load_or_refresh_mapping(path: Path = DEFAULT_MAPPING_PATH, stale_days: int = 7, force: bool = False) -> tuple[pd.DataFrame, bool]:
-    if not force and path.exists() and _mapping_age_days(path) <= stale_days:
-        return pd.read_csv(path, dtype={"stock_code": str, "sw_level2_code": str}), False
+def refresh_mapping(path: Path = DEFAULT_MAPPING_PATH) -> pd.DataFrame:
     mapping = build_mapping()
     ensure_dir(path.parent)
     mapping.to_csv(path, index=False, encoding="utf-8-sig")
-    return mapping, True
+    return mapping
+
+
+def load_or_refresh_mapping(path: Path = DEFAULT_MAPPING_PATH, stale_days: int = 7, force: bool = False) -> tuple[pd.DataFrame, bool]:
+    """Daily jobs read the cache only; network refresh is explicit/weekly."""
+    if force:
+        return refresh_mapping(path), True
+    if path.exists():
+        return pd.read_csv(path, dtype={"stock_code": str, "sw_level2_code": str}), False
+    return pd.DataFrame(columns=MAPPING_COLUMNS), False
