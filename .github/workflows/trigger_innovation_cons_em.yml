@@ -1,0 +1,8 @@
+name: Trigger Innovation Cons EM
+on:
+  workflow_dispatch:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo innovation-cons-em
