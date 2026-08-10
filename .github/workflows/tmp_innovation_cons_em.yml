@@ -1,4 +1,4 @@
-name: Innovation Drug Constituents EM
+name: Innovation Drug THS Diagnostic
 on:
   pull_request:
     paths:
@@ -19,10 +19,10 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python fetch_innovation_cons_em.py
+      - run: python diagnose_innovation_ths.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: innovation-cons-em-20260810
-          path: data/innovation_drug_cons_em_20260810.csv
+          name: innovation-ths-diagnostic
+          path: data/innovation_ths_diagnostic.json
           if-no-files-found: warn
