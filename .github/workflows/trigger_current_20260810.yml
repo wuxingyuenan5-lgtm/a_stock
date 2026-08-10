@@ -1,0 +1,8 @@
+name: Trigger Current Snapshot 20260810
+on:
+  workflow_dispatch:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo current-20260810
