@@ -3,6 +3,7 @@ name: Temporary trigger marker
 on:
   workflow_dispatch:
 
+# refresh-marker: 2026-08-10-1611
 jobs:
   noop:
     if: ${{ false }}
