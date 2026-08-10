@@ -9,7 +9,7 @@ import pandas as pd
 from .collectors import (
     fetch_a_share_spot,
     fetch_indices,
-    fetch_innovation_current_ths,
+    fetch_innovation_current_em,
     fetch_sw_analysis,
     infer_limit_counts,
     update_innovation_history,
@@ -88,7 +88,6 @@ def _normalize_sw_targets(
         share = share_raw / 100 if share_raw is not None else None
         turnover_raw = _number(row[turnover_col]) if turnover_col else None
         turnover = turnover_raw / 100 if turnover_raw is not None else None
-        # Only derive amount from the current market denominator when dates match.
         if amount is None and share is not None and row_date == target_date and market_amount_100m:
             amount = share * market_amount_100m
         if share is None and amount is not None and row_date == target_date and market_amount_100m:
@@ -141,6 +140,7 @@ def _validation(
     add("sw_targets", len(sw_targets) >= 4, "WARN", f"{len(sw_targets)} targets")
     innovation_ok = innovation_latest is not None and innovation_latest.get("date") == target_date
     add("innovation_current", innovation_ok, "WARN", str(innovation_latest.get("date") if innovation_latest else None))
+    add("innovation_turnover", innovation_latest is not None and innovation_latest.get("turnover") is not None, "WARN", str(innovation_latest.get("turnover") if innovation_latest else None))
     add("sw_mapping_cache", mapping_available, "WARN", "available" if mapping_available else "not initialized; weekly refresh required")
 
     failed = [c for c in checks if not c["ok"] and c["level"] == "FAIL"]
@@ -157,7 +157,6 @@ def run(
     config = load_json(root / config_path)
     paths = _paths(root, target_date)
 
-    # Core market snapshot: this is the only mandatory upstream module.
     spot = fetch_a_share_spot()
     limit_up, limit_down = infer_limit_counts(spot)
     advance = int((spot["return"] > 0).sum())
@@ -195,19 +194,15 @@ def run(
     }
     market_history = update_market_history(paths.history_dir / "market_core.csv", market)
 
-    # Optional modules are isolated: failures become validation warnings, not report failure.
     indices = fetch_indices(target_date, config["indices"])
     sw_raw = fetch_sw_analysis(target_date)
     sw_raw.to_csv(paths.output_dir / "sw_analysis_daily_second.csv", index=False, encoding="utf-8-sig")
     sw_targets = _normalize_sw_targets(sw_raw, config["sw_crowding_codes"], target_date, total_amount)
     sw_date = _sw_latest_date(sw_raw)
 
-    innovation = update_innovation_history(
-        target_date,
-        paths.history_dir / "innovation_drug_886015.csv",
-        config["history_start"],
-    )
-    innovation_current = fetch_innovation_current_ths(target_date)
+    innovation_history_path = paths.history_dir / "innovation_drug_eastmoney.csv"
+    innovation = update_innovation_history(target_date, innovation_history_path, config["history_start"])
+    innovation_current = fetch_innovation_current_em(target_date)
     innovation_latest = None
     innovation_history_latest_date = None
     if not innovation.empty:
@@ -231,27 +226,27 @@ def run(
                 "date": str(row["date"]),
                 "amount_100m": _number(row["amount_100m"]),
                 "amount_share_of_a": _number(row["amount_share_of_a"]),
-                "turnover": None,
+                "turnover": _number(row.get("换手率")),
                 "volume_activity_20d": _number(row["20日成交量活跃度代理"]),
                 "return": _number(row["日收益率"]),
                 "volume": _number(row["成交量"]),
                 "topic_code": config["innovation_drug"]["code"],
                 "source": config["innovation_drug"]["source"],
-                "turnover_status": "板块历史总流通股本缺少可靠可比序列，正式换手率保持空白",
+                "turnover_status": "东方财富概念板块历史接口直接字段",
             }
     if innovation_current is not None:
         innovation_latest = {
             "date": target_date,
             "amount_100m": innovation_current.get("amount_100m"),
             "amount_share_of_a": (float(innovation_current["amount_100m"]) / total_amount) if innovation_current.get("amount_100m") is not None and total_amount else None,
-            "turnover": None,
+            "turnover": innovation_current.get("turnover"),
             "volume_activity_20d": None,
             "return": innovation_current.get("return"),
             "volume": None,
             "topic_code": config["innovation_drug"]["code"],
             "source": innovation_current.get("source"),
             "history_latest_date": innovation_history_latest_date,
-            "turnover_status": "同花顺主题快照无板块总换手率；历史正式换手率保持空白",
+            "turnover_status": "东方财富概念板块实时接口直接字段",
         }
 
     combined = _combine_sw_targets(sw_targets)
@@ -281,14 +276,14 @@ def run(
             "a_share_snapshot": "AKShare stock_zh_a_spot / 新浪",
             "indices": "东方财富历史K线; 失败时回退 AKShare stock_zh_index_spot_em",
             "sw_analysis": "AKShare index_analysis_daily_sw / 申万",
-            "innovation_drug": "同花顺创新药概念指数/当日概念简介",
+            "innovation_drug": "东方财富创新药概念板块历史/实时",
             "sw_mapping": "AKShare sw_index_second_info + index_component_sw",
         },
         "cache": {
             "sw_mapping_refreshed": mapping_refreshed,
             "sw_mapping_available": mapping_available,
             "market_history": str(paths.history_dir / "market_core.csv"),
-            "innovation_history": str(paths.history_dir / "innovation_drug_886015.csv"),
+            "innovation_history": str(innovation_history_path),
         },
     }
 
