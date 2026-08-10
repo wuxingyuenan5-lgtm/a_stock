@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from market_monitor.pipeline import run
+
+
+def default_date() -> str:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="A股每日监控一键数据生产")
+    parser.add_argument("--target-date", default=default_date(), help="YYYY-MM-DD")
+    parser.add_argument("--config", default="config/market_monitor.json")
+    parser.add_argument("--refresh-mapping", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    result = run(target_date=args.target_date, config_path=Path(args.config), refresh_mapping=args.refresh_mapping)
+    validation = result["validation"]
+    print(f"completed date={args.target_date} status={validation['status']} output={result['output_dir']}")
+
+
+if __name__ == "__main__":
+    main()
