@@ -26,3 +26,4 @@ jobs:
           name: innovation-turnover-proxy-20260810
           path: data/innovation_drug_history_2026.csv
           if-no-files-found: warn
+# triggered 2026-08-10
