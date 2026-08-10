@@ -1,3 +1,4 @@
 akshare==1.18.74
 pandas>=2.2,<3
-# refresh-marker: 2026-08-06-1600
+requests>=2.31,<3
+# production-pipeline: 2026-08-10
