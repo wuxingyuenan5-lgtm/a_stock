@@ -14,7 +14,8 @@ from .common import append_history, ensure_dir, retry
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-INDEX_SPOT_GROUPS = ["沪深重要指数", "上证系列指数", "深证系列指数", "指数成份", "中证系列指数"]
+EM_UT = "fa5fd1943c7b386f172d6893dbfba10b"
+INNOVATION_EM_SECID = "90.BK1106"
 
 
 def _pick(frame: pd.DataFrame, *names: str) -> str:
@@ -58,13 +59,7 @@ def _normalize_a_share_spot(raw: pd.DataFrame, source: str) -> pd.DataFrame:
 
 
 def fetch_a_share_spot() -> pd.DataFrame:
-    try:
-        raw = retry(ak.stock_zh_a_spot_em, attempts=2, delay=1.0)
-        result = _normalize_a_share_spot(raw, "AKShare stock_zh_a_spot_em / 东方财富")
-        if len(result) >= 4500:
-            return result
-    except Exception:
-        pass
+    """Use the already-validated Sina all-A snapshot on GitHub runners."""
     raw = retry(ak.stock_zh_a_spot, attempts=3, delay=2.0)
     return _normalize_a_share_spot(raw, "AKShare stock_zh_a_spot / 新浪")
 
@@ -90,117 +85,126 @@ def infer_limit_counts(frame: pd.DataFrame) -> tuple[int, int]:
     return up, down
 
 
-def fetch_eastmoney_index(target_date: str, secid: str, name: str) -> dict[str, object]:
-    compact = target_date.replace("-", "")
+def _fetch_em_klines(secid: str, beg: str, end: str, lmt: int = 1000) -> list[list[str]]:
     params = {
         "secid": secid,
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "klt": "101", "fqt": "0", "beg": compact, "end": compact, "lmt": "10",
-        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        "klt": "101",
+        "fqt": "0",
+        "beg": beg,
+        "end": end,
+        "lmt": str(lmt),
+        "ut": EM_UT,
     }
-    def request() -> dict[str, object]:
-        response = requests.get(EM_KLINE_URL, params=params, headers={"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"}, timeout=8)
+
+    def request() -> list[list[str]]:
+        response = requests.get(
+            EM_KLINE_URL,
+            params=params,
+            headers={"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"},
+            timeout=(4, 8),
+        )
         response.raise_for_status()
         payload = response.json()
-        rows = (payload.get("data") or {}).get("klines") or []
-        if not rows:
-            raise RuntimeError("empty kline")
-        values = rows[-1].split(",")
-        return {
-            "date": values[0], "name": name, "code": secid, "close": float(values[2]),
-            "return": float(values[8]) / 100, "amount_100m": float(values[6]) / 1e8,
-            "source": "东方财富历史接口", "status": "ok",
-        }
+        raw_rows = (payload.get("data") or {}).get("klines") or []
+        if not raw_rows:
+            raise RuntimeError(f"empty Eastmoney kline: {secid}")
+        parsed = [row.split(",") for row in raw_rows]
+        return [row for row in parsed if len(row) >= 11]
+
     return retry(request, attempts=2, delay=0.8)
 
 
-def _fetch_index_group(group: str) -> pd.DataFrame:
-    try:
-        frame = retry(lambda: ak.stock_zh_index_spot_em(symbol=group), attempts=2, delay=0.8)
-        return frame.copy() if frame is not None else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
-
-
-def _fetch_index_spot_pool() -> pd.DataFrame:
-    frames: list[pd.DataFrame] = []
-    with ThreadPoolExecutor(max_workers=len(INDEX_SPOT_GROUPS)) as executor:
-        futures = {executor.submit(_fetch_index_group, group): group for group in INDEX_SPOT_GROUPS}
-        for future in as_completed(futures):
-            frame = future.result()
-            if not frame.empty:
-                frames.append(frame)
-    if not frames:
-        return pd.DataFrame()
-    pool = pd.concat(frames, ignore_index=True)
-    if "代码" in pool.columns:
-        pool["代码"] = pool["代码"].astype(str).str.extract(r"(\d{6})", expand=False)
-        pool = pool.drop_duplicates("代码", keep="first")
-    return pool
+def fetch_eastmoney_index(target_date: str, secid: str, name: str) -> dict[str, object]:
+    compact = target_date.replace("-", "")
+    values = _fetch_em_klines(secid, compact, compact, lmt=10)[-1]
+    return {
+        "date": values[0],
+        "name": name,
+        "code": secid,
+        "close": float(values[2]),
+        "return": float(values[8]) / 100,
+        "amount_100m": float(values[6]) / 1e8,
+        "source": "东方财富历史K线直连",
+        "status": "ok",
+    }
 
 
 def fetch_indices(target_date: str, definitions: list[dict[str, str]]) -> list[dict[str, object]]:
-    pool = _fetch_index_spot_pool()
-    records: list[dict[str, object]] = []
-    for item in definitions:
-        code = item["secid"].split(".")[-1]
-        selected = pool[pool["代码"] == code] if not pool.empty and "代码" in pool.columns else pd.DataFrame()
-        if not selected.empty:
-            row = selected.iloc[-1]
-            close = _as_number(row.get("最新价"))
-            pct = _as_number(row.get("涨跌幅"))
-            amount = _as_number(row.get("成交额"))
-            if close is not None:
-                records.append({
-                    "date": target_date, "name": item["name"], "code": item["secid"],
-                    "close": close, "return": pct / 100 if pct is not None else None,
-                    "amount_100m": amount / 1e8 if amount is not None else None,
-                    "source": "AKShare stock_zh_index_spot_em / 东方财富实时指数", "status": "ok",
-                })
-                continue
+    """Fetch the three daily indices concurrently; each request has a hard timeout."""
+    results: dict[str, dict[str, object]] = {}
+
+    def task(item: dict[str, str]) -> dict[str, object]:
         try:
-            records.append(fetch_eastmoney_index(target_date, item["secid"], item["name"]))
+            return fetch_eastmoney_index(target_date, item["secid"], item["name"])
         except Exception as exc:
-            records.append({
-                "date": target_date, "name": item["name"], "code": item["secid"],
-                "close": None, "return": None, "amount_100m": None,
-                "source": "东方财富指数接口", "status": f"error: {exc}",
-            })
-    return records
+            return {
+                "date": target_date,
+                "name": item["name"],
+                "code": item["secid"],
+                "close": None,
+                "return": None,
+                "amount_100m": None,
+                "source": "东方财富历史K线直连",
+                "status": f"error: {exc}",
+            }
+
+    with ThreadPoolExecutor(max_workers=max(1, len(definitions))) as executor:
+        futures = {executor.submit(task, item): item["name"] for item in definitions}
+        for future in as_completed(futures):
+            record = future.result()
+            results[str(record["name"])] = record
+    return [results[item["name"]] for item in definitions]
 
 
 def fetch_sw_analysis(target_date: str) -> pd.DataFrame:
+    """Optional Shenwan module. Its failure never blocks the core market payload."""
     target = datetime.strptime(target_date, "%Y-%m-%d")
     start = (target - timedelta(days=10)).strftime("%Y%m%d")
     end = target.strftime("%Y%m%d")
     try:
-        frame = retry(lambda: ak.index_analysis_daily_sw(symbol="二级行业", start_date=start, end_date=end), attempts=2, delay=2.0).copy()
+        frame = retry(
+            lambda: ak.index_analysis_daily_sw(symbol="二级行业", start_date=start, end_date=end),
+            attempts=2,
+            delay=2.0,
+        ).copy()
         return pd.DataFrame() if frame is None else frame
     except Exception:
         return pd.DataFrame()
 
 
+def _innovation_em_frame(beg: str, end: str) -> pd.DataFrame:
+    records: list[dict[str, object]] = []
+    for values in _fetch_em_klines(INNOVATION_EM_SECID, beg, end, lmt=1000):
+        records.append({
+            "日期": pd.to_datetime(values[0]),
+            "收盘价": float(values[2]),
+            "成交量": float(values[5]),
+            "成交额": float(values[6]),
+            "日收益率": float(values[8]) / 100,
+            "换手率": float(values[10]) / 100,
+            "数据源": "东方财富创新药BK1106历史K线直连",
+        })
+    return pd.DataFrame(records)
+
+
 def fetch_innovation_current_em(target_date: str) -> dict[str, object] | None:
+    compact = target_date.replace("-", "")
     try:
-        frame = retry(lambda: ak.stock_board_concept_spot_em(symbol="创新药"), attempts=2, delay=1.0)
+        frame = _innovation_em_frame(compact, compact)
     except Exception:
         return None
-    if frame is None or frame.empty or not {"item", "value"}.issubset(frame.columns):
+    if frame.empty:
         return None
-    values = {str(row["item"]).strip(): row["value"] for _, row in frame.iterrows()}
-    amount_yuan = _as_number(values.get("成交额"))
-    turnover_pct = _as_number(values.get("换手率"))
-    return_pct = _as_number(values.get("涨跌幅"))
-    close = _as_number(values.get("最新"))
-    if amount_yuan is None and turnover_pct is None and return_pct is None:
-        return None
+    row = frame.iloc[-1]
     return {
-        "date": target_date, "close": close,
-        "amount_100m": amount_yuan / 1e8 if amount_yuan is not None else None,
-        "turnover": turnover_pct / 100 if turnover_pct is not None else None,
-        "return": return_pct / 100 if return_pct is not None else None,
-        "source": "东方财富 stock_board_concept_spot_em",
+        "date": target_date,
+        "close": _as_number(row["收盘价"]),
+        "amount_100m": _as_number(row["成交额"]) / 1e8 if _as_number(row["成交额"]) is not None else None,
+        "turnover": _as_number(row["换手率"]),
+        "return": _as_number(row["日收益率"]),
+        "source": "东方财富创新药BK1106历史K线直连",
     }
 
 
@@ -216,15 +220,19 @@ def fetch_innovation_current_ths(target_date: str) -> dict[str, object] | None:
     return_raw = values.get("板块涨幅")
     amount = _as_number(str(amount_raw).replace("亿", "")) if amount_raw is not None else None
     ret = _as_number(str(return_raw).replace("%", "")) if return_raw is not None else None
+    if amount is None and ret is None:
+        return None
     return {
-        "date": target_date, "amount_100m": amount, "turnover": None,
+        "date": target_date,
+        "amount_100m": amount,
+        "turnover": None,
         "return": ret / 100 if ret is not None else None,
         "source": "同花顺 stock_board_concept_info_ths",
-    } if amount is not None or ret is not None else None
+    }
 
 
 def update_innovation_history(target_date: str, history_path: Path, history_start: str) -> pd.DataFrame:
-    """Eastmoney one-source history with direct turnover."""
+    """Eastmoney BK1106 history with hard HTTP timeouts and direct turnover."""
     ensure_dir(history_path.parent)
     existing = pd.DataFrame()
     if history_path.exists():
@@ -235,40 +243,42 @@ def update_innovation_history(target_date: str, history_path: Path, history_star
     else:
         start = history_start.replace("-", "")
     try:
-        fresh = retry(lambda: ak.stock_board_concept_hist_em(symbol="创新药", period="daily", start_date=start, end_date=target_date.replace("-", ""), adjust=""), attempts=2, delay=1.0).copy()
+        fresh = _innovation_em_frame(start, target_date.replace("-", ""))
     except Exception:
         return existing
-    if fresh.empty or not {"日期", "收盘", "成交量", "成交额", "换手率"}.issubset(fresh.columns):
+    if fresh.empty:
         return existing
-    fresh = fresh.rename(columns={"收盘": "收盘价"})
-    fresh["日期"] = pd.to_datetime(fresh["日期"], errors="coerce")
-    for column in ("收盘价", "成交量", "成交额", "换手率"):
-        fresh[column] = pd.to_numeric(fresh[column], errors="coerce")
-    fresh["换手率"] = fresh["换手率"] / 100
-    fresh["日收益率"] = pd.to_numeric(fresh["涨跌幅"], errors="coerce") / 100 if "涨跌幅" in fresh.columns else fresh["收盘价"].pct_change(fill_method=None)
-    fresh = fresh.dropna(subset=["日期", "收盘价", "成交量", "成交额"]).sort_values("日期")
-    fresh["数据源"] = "东方财富概念板块历史"
     combined = pd.concat([existing, fresh], ignore_index=True, sort=False) if not existing.empty else fresh
     combined["日期"] = pd.to_datetime(combined["日期"], errors="coerce")
     combined = combined.dropna(subset=["日期"]).drop_duplicates("日期", keep="last").sort_values("日期")
     combined["20日成交量活跃度代理"] = combined["成交量"] / combined["成交量"].rolling(20, min_periods=1).mean()
-    exported = combined.copy(); exported["日期"] = exported["日期"].dt.strftime("%Y-%m-%d")
+    exported = combined.copy()
+    exported["日期"] = exported["日期"].dt.strftime("%Y-%m-%d")
     exported.to_csv(history_path, index=False, encoding="utf-8-sig", float_format="%.10f")
     return combined
 
 
 def update_innovation_history_ths(target_date: str, history_path: Path, history_start: str) -> pd.DataFrame:
-    """Separate fallback history; never mixed into the Eastmoney cache."""
+    """Separate THS fallback history; never mixed into the Eastmoney cache."""
     ensure_dir(history_path.parent)
     existing = pd.DataFrame()
     if history_path.exists():
         existing = pd.read_csv(history_path, encoding="utf-8-sig")
         existing["日期"] = pd.to_datetime(existing["日期"], errors="coerce")
-        last_date = existing["日期"].max(); start = (last_date - pd.Timedelta(days=7)).strftime("%Y%m%d")
+        last_date = existing["日期"].max()
+        start = (last_date - pd.Timedelta(days=7)).strftime("%Y%m%d")
     else:
         start = history_start.replace("-", "")
     try:
-        fresh = retry(lambda: ak.stock_board_concept_index_ths(symbol="创新药", start_date=start, end_date=target_date.replace("-", "")), attempts=2, delay=1.0).copy()
+        fresh = retry(
+            lambda: ak.stock_board_concept_index_ths(
+                symbol="创新药",
+                start_date=start,
+                end_date=target_date.replace("-", ""),
+            ),
+            attempts=2,
+            delay=1.0,
+        ).copy()
     except Exception:
         return existing
     if fresh.empty or not {"日期", "收盘价", "成交量", "成交额"}.issubset(fresh.columns):
@@ -284,7 +294,8 @@ def update_innovation_history_ths(target_date: str, history_path: Path, history_
     combined["日期"] = pd.to_datetime(combined["日期"], errors="coerce")
     combined = combined.dropna(subset=["日期"]).drop_duplicates("日期", keep="last").sort_values("日期")
     combined["20日成交量活跃度代理"] = combined["成交量"] / combined["成交量"].rolling(20, min_periods=1).mean()
-    exported = combined.copy(); exported["日期"] = exported["日期"].dt.strftime("%Y-%m-%d")
+    exported = combined.copy()
+    exported["日期"] = exported["日期"].dt.strftime("%Y-%m-%d")
     exported.to_csv(history_path, index=False, encoding="utf-8-sig", float_format="%.10f")
     return combined
 
