@@ -1,9 +1,9 @@
 name: Trigger Innovation Drug 20260810
 on:
   workflow_dispatch:
-# retry split history/legacy constituents: 2026-08-10 16:42 CST
+# retry legacy git tag: 2026-08-10 16:46 CST
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo innovation-drug-20260810-split
+      - run: echo innovation-drug-legacy-tag
