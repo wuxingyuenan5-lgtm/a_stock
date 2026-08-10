@@ -15,7 +15,8 @@
   },
   "innovation_drug": {
     "name": "创新药",
-    "code": "886015",
-    "source": "同花顺概念指数"
+    "symbol": "创新药",
+    "code": "EM_CONCEPT_INNOVATION_DRUG",
+    "source": "东方财富概念板块"
   }
 }
