@@ -1,0 +1,89 @@
+name: Daily A-share Market Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "Trading date, YYYY-MM-DD; blank uses Asia/Shanghai today"
+        required: false
+        default: ""
+      refresh_mapping:
+        description: "Force refresh Shenwan stock mapping"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "40 8 * * 1-5"
+
+concurrency:
+  group: daily-market-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resolve date
+        id: date
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.target_date }}" ]; then
+            target="${{ inputs.target_date }}"
+          else
+            target="$(date +%F)"
+          fi
+          echo "value=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Syntax check
+        run: |
+          python -m py_compile run_daily.py
+          python -m py_compile market_monitor/*.py
+
+      - name: Produce normalized payload
+        shell: bash
+        run: |
+          extra=""
+          if [ "${{ inputs.refresh_mapping }}" = "true" ]; then
+            extra="--refresh-mapping"
+          fi
+          python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
+
+      - name: Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-share-monitor-${{ steps.date.outputs.value }}
+          path: output/${{ steps.date.outputs.value }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Persist incremental histories and JSON archive
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/history data/cache "output/${{ steps.date.outputs.value }}/*.json"
+          if git diff --cached --quiet; then
+            echo "No persistent data changes"
+          else
+            git commit -m "data: daily market monitor ${{ steps.date.outputs.value }}"
+            git push
+          fi
