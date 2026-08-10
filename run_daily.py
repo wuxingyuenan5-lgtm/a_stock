@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from market_monitor.pipeline import run
+from market_monitor.production import run
 
 
 def default_date() -> str:
