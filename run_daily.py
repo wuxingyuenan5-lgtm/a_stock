@@ -15,7 +15,7 @@ def default_date() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="A股每日监控一键数据生产")
-    parser.add_argument("--target-date", default=default_date(), help="YYYY-MM-DD")
+    parser.add_argument("--target-date", default=default_date(), help="YYYY-MM-DD；正式日更只允许中国时区当天")
     parser.add_argument("--config", default="config/market_monitor.json")
     parser.add_argument("--refresh-mapping", action="store_true")
     return parser.parse_args()
@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    today = default_date()
+    if args.target_date != today:
+        raise SystemExit(
+            f"daily pipeline uses a current-day stock snapshot, so target_date must be {today}; "
+            "use the historical backfill workflow for older dates"
+        )
     result = run(target_date=args.target_date, config_path=Path(args.config), refresh_mapping=args.refresh_mapping)
     validation = result["validation"]
     print(f"completed date={args.target_date} status={validation['status']} output={result['output_dir']}")
