@@ -1,0 +1,35 @@
+name: Current A-share Snapshot 20260810
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/trigger_current_20260810.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python build_current_snapshot_20260810.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-a-share-20260810
+          path: |
+            data/market_summary_20260810.csv
+            data/index_snapshot_20260810.csv
+            data/turnover_100bn_stocks_20260810.csv
+            data/all_a_snapshot_20260810.csv
+            data/metadata_20260810.json
+          if-no-files-found: error
