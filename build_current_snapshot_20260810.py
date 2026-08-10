@@ -46,9 +46,26 @@ def index(secid,name):
             x=ls[-1].split(',');return {'日期':x[0],'指标':name,'数据代码':secid,'收盘点位':float(x[2]),'涨跌幅':float(x[8])/100,'成交额（亿元）':float(x[6])/1e8,'数据源':'东方财富历史接口'}
         except Exception as e:last=e;time.sleep(2*(i+1))
     return {'日期':TARGET,'指标':name,'数据代码':secid,'收盘点位':None,'涨跌幅':None,'成交额（亿元）':None,'数据源':f'接口失败: {last}'}
+def optional_sw():
+    try:
+        f=ak.index_analysis_daily_sw(symbol='二级行业',start_date='20260105',end_date='20260810')
+        f.to_csv(DATA/f'sw_analysis_daily_second_{OUT_TAG}.csv',index=False,encoding='utf-8-sig')
+        print('sw_analysis rows',len(f),flush=True)
+    except Exception as e: print('sw_analysis failed',repr(e),flush=True)
+def optional_innovation():
+    try:
+        f=ak.stock_board_concept_index_ths(symbol='创新药',start_date='20260101',end_date='20260810')
+        f.to_csv(DATA/f'innovation_drug_index_ths_{OUT_TAG}.csv',index=False,encoding='utf-8-sig')
+        print('innovation history rows',len(f),flush=True)
+    except Exception as e: print('innovation history failed',repr(e),flush=True)
+    try:
+        f=ak.stock_board_concept_info_ths(symbol='创新药')
+        f.to_csv(DATA/f'innovation_drug_info_ths_{OUT_TAG}.csv',index=False,encoding='utf-8-sig')
+        print('innovation info rows',len(f),flush=True)
+    except Exception as e: print('innovation info failed',repr(e),flush=True)
 spot=normalize(fetch_spot());u=int((spot.涨跌幅>0).sum());d=int((spot.涨跌幅<0).sum());fl=int((spot.涨跌幅==0).sum());lu,ld=limits(spot);ta=float(spot['成交额（亿元）'].sum());hot=spot[spot['成交额（亿元）']>=100].sort_values('成交额（亿元）',ascending=False).copy();hot.insert(0,'当日排名',range(1,len(hot)+1));hot.insert(0,'日期',TARGET);ha=float(hot['成交额（亿元）'].sum())
 summary=pd.DataFrame([{'日期':TARGET,'上涨家数':u,'下跌家数':d,'平盘家数':fl,'涨停家数':lu,'跌停家数':ld,'有效股票数':len(spot),'全部A股成交额（亿元）':ta,'百亿成交股数':len(hot),'百亿成交额（亿元）':ha,'百亿成交集中度':ha/ta if ta else None,'数据源':'AKShare新浪沪深京A股收盘快照+逐股涨跌停价回推'}])
-# Persist the reliable market snapshot before attempting any less-stable index endpoints.
 summary.to_csv(DATA/f'market_summary_{OUT_TAG}.csv',index=False,encoding='utf-8-sig');hot.to_csv(DATA/f'turnover_100bn_stocks_{OUT_TAG}.csv',index=False,encoding='utf-8-sig');spot.to_csv(DATA/f'all_a_snapshot_{OUT_TAG}.csv',index=False,encoding='utf-8-sig')
 indices=pd.DataFrame([index('1.000016','上证50'),index('47.800007','Choice微盘'),index('1.000985','中证全指')]);indices.to_csv(DATA/f'index_snapshot_{OUT_TAG}.csv',index=False,encoding='utf-8-sig')
+optional_sw();optional_innovation()
 (DATA/f'metadata_{OUT_TAG}.json').write_text(json.dumps({'target_date':TARGET,'effective':len(spot),'hot':len(hot)},ensure_ascii=False,indent=2),encoding='utf-8');print(summary.to_string(index=False));print(indices.to_string(index=False))
