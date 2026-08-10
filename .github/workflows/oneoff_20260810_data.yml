@@ -1,0 +1,29 @@
+name: Oneoff 20260810 Data
+on:
+  push:
+    branches: [daily-snapshot-20260810]
+    paths:
+      - .github/workflows/oneoff_20260810_data.yml
+      - oneoff_20260810_data.py
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: daily-snapshot-20260810
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python oneoff_20260810_data.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oneoff-20260810-data
+          path: data/oneoff_20260810/
+          if-no-files-found: warn
