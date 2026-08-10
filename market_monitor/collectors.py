@@ -164,60 +164,72 @@ def fetch_sw_analysis(target_date: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def fetch_innovation_current_ths(target_date: str) -> dict[str, object] | None:
-    """Current-day THS topic snapshot. It has amount/return but no board turnover."""
+def fetch_innovation_current_em(target_date: str) -> dict[str, object] | None:
+    """Current Eastmoney innovation-drug board snapshot, including turnover."""
     try:
-        frame = retry(lambda: ak.stock_board_concept_info_ths(symbol="创新药"), attempts=3, delay=1.5)
+        frame = retry(lambda: ak.stock_board_concept_spot_em(symbol="创新药"), attempts=3, delay=1.5)
     except Exception:
         return None
-    if frame is None or frame.empty or not {"项目", "值"}.issubset(frame.columns):
+    if frame is None or frame.empty or not {"item", "value"}.issubset(frame.columns):
         return None
-    values = {str(row["项目"]).strip(): row["值"] for _, row in frame.iterrows()}
-    amount_raw = values.get("成交额(亿)")
-    return_raw = values.get("板块涨幅")
-    amount = _as_number(str(amount_raw).replace("亿", "")) if amount_raw is not None else None
-    if return_raw is None:
-        ret = None
-    else:
-        ret = _as_number(str(return_raw).replace("%", ""))
-        ret = ret / 100 if ret is not None else None
-    if amount is None and ret is None:
+    values = {str(row["item"]).strip(): row["value"] for _, row in frame.iterrows()}
+    amount_yuan = _as_number(values.get("成交额"))
+    turnover_pct = _as_number(values.get("换手率"))
+    return_pct = _as_number(values.get("涨跌幅"))
+    close = _as_number(values.get("最新"))
+    if amount_yuan is None and turnover_pct is None and return_pct is None:
         return None
     return {
         "date": target_date,
-        "amount_100m": amount,
-        "return": ret,
-        "source": "同花顺 stock_board_concept_info_ths",
+        "close": close,
+        "amount_100m": amount_yuan / 1e8 if amount_yuan is not None else None,
+        "turnover": turnover_pct / 100 if turnover_pct is not None else None,
+        "return": return_pct / 100 if return_pct is not None else None,
+        "source": "东方财富 stock_board_concept_spot_em",
     }
 
 
 def update_innovation_history(target_date: str, history_path: Path, history_start: str) -> pd.DataFrame:
+    """Incrementally maintain one-source Eastmoney innovation-drug history."""
     ensure_dir(history_path.parent)
+    existing = pd.DataFrame()
     if history_path.exists():
         existing = pd.read_csv(history_path, encoding="utf-8-sig")
         existing["日期"] = pd.to_datetime(existing["日期"], errors="coerce")
         last_date = existing["日期"].max()
         start = (last_date - pd.Timedelta(days=7)).strftime("%Y%m%d")
     else:
-        existing = pd.DataFrame()
         start = history_start.replace("-", "")
     try:
-        fresh = retry(lambda: ak.stock_board_concept_index_ths(symbol="创新药", start_date=start, end_date=target_date.replace("-", "")), attempts=3, delay=2.0).copy()
+        fresh = retry(
+            lambda: ak.stock_board_concept_hist_em(
+                symbol="创新药", period="daily", start_date=start,
+                end_date=target_date.replace("-", ""), adjust=""
+            ),
+            attempts=3,
+            delay=2.0,
+        ).copy()
     except Exception:
-        if existing.empty:
-            return pd.DataFrame()
-        fresh = pd.DataFrame()
-    if not fresh.empty:
-        for column in ("收盘价", "成交量", "成交额"):
-            fresh[column] = pd.to_numeric(fresh[column], errors="coerce")
-        fresh["日期"] = pd.to_datetime(fresh["日期"], errors="coerce")
-        fresh = fresh.dropna(subset=["日期", "收盘价", "成交量", "成交额"])
-    combined = pd.concat([existing, fresh], ignore_index=True) if not existing.empty else fresh
-    if combined.empty:
-        return combined
+        return existing
+    if fresh.empty:
+        return existing
+    required = {"日期", "收盘", "成交量", "成交额", "换手率"}
+    if not required.issubset(fresh.columns):
+        return existing
+    fresh = fresh.rename(columns={"收盘": "收盘价"})
+    fresh["日期"] = pd.to_datetime(fresh["日期"], errors="coerce")
+    for column in ("收盘价", "成交量", "成交额", "换手率"):
+        fresh[column] = pd.to_numeric(fresh[column], errors="coerce")
+    fresh["换手率"] = fresh["换手率"] / 100
+    if "涨跌幅" in fresh.columns:
+        fresh["日收益率"] = pd.to_numeric(fresh["涨跌幅"], errors="coerce") / 100
+    else:
+        fresh["日收益率"] = fresh["收盘价"].pct_change(fill_method=None)
+    fresh = fresh.dropna(subset=["日期", "收盘价", "成交量", "成交额"]).sort_values("日期")
+    fresh["数据源"] = "东方财富概念板块历史"
+    combined = pd.concat([existing, fresh], ignore_index=True, sort=False) if not existing.empty else fresh
     combined["日期"] = pd.to_datetime(combined["日期"], errors="coerce")
     combined = combined.dropna(subset=["日期"]).drop_duplicates("日期", keep="last").sort_values("日期")
-    combined["日收益率"] = combined["收盘价"].pct_change(fill_method=None)
     combined["20日成交量活跃度代理"] = combined["成交量"] / combined["成交量"].rolling(20, min_periods=1).mean()
     exported = combined.copy()
     exported["日期"] = exported["日期"].dt.strftime("%Y-%m-%d")
