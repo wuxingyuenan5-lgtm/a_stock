@@ -12,7 +12,7 @@ permissions:
 jobs:
   innovation:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,7 +23,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python fetch_innovation_drug_history_only.py
-      - run: pip install --force-reinstall 'akshare==1.14.16' 'pandas<3'
+      - run: pip install --force-reinstall 'git+https://github.com/akfamily/akshare.git@release-v1.14.16' 'pandas<3'
       - run: python fetch_innovation_drug_cons_old.py
       - uses: actions/upload-artifact@v4
         if: always()
