@@ -6,7 +6,15 @@ from typing import Any
 
 import pandas as pd
 
-from .collectors import fetch_a_share_spot, fetch_indices, fetch_sw_analysis, infer_limit_counts, update_innovation_history, update_market_history
+from .collectors import (
+    fetch_a_share_spot,
+    fetch_indices,
+    fetch_innovation_current_ths,
+    fetch_sw_analysis,
+    infer_limit_counts,
+    update_innovation_history,
+    update_market_history,
+)
 from .common import ensure_dir, load_json, write_json
 from .sw_mapping import load_or_refresh_mapping
 
@@ -21,7 +29,13 @@ class PipelinePaths:
 
 
 def _paths(root: Path, target_date: str) -> PipelinePaths:
-    return PipelinePaths(root=root, data_dir=ensure_dir(root / "data"), history_dir=ensure_dir(root / "data" / "history"), cache_dir=ensure_dir(root / "data" / "cache"), output_dir=ensure_dir(root / "output" / target_date))
+    return PipelinePaths(
+        root=root,
+        data_dir=ensure_dir(root / "data"),
+        history_dir=ensure_dir(root / "data" / "history"),
+        cache_dir=ensure_dir(root / "data" / "cache"),
+        output_dir=ensure_dir(root / "output" / target_date),
+    )
 
 
 def _number(value: Any) -> float | None:
@@ -41,11 +55,18 @@ def _sw_latest_date(frame: pd.DataFrame) -> str | None:
     return dates.max().strftime("%Y-%m-%d") if not dates.empty else None
 
 
-def _normalize_sw_targets(frame: pd.DataFrame, target_codes: dict[str, str], market_amount_100m: float) -> dict[str, dict[str, object]]:
+def _normalize_sw_targets(
+    frame: pd.DataFrame,
+    target_codes: dict[str, str],
+    target_date: str,
+    market_amount_100m: float,
+) -> dict[str, dict[str, object]]:
+    """Normalize official Shenwan turnover/share fields without mixing dates."""
     code_col = next((c for c in ("指数代码", "行业代码", "代码") if c in frame.columns), None)
     if frame.empty or code_col is None:
         return {}
     amount_col = next((c for c in ("成交额", "成交额（亿元）", "成交额(亿元)") if c in frame.columns), None)
+    share_col = next((c for c in ("成交额占比", "成交额占比%") if c in frame.columns), None)
     turnover_col = next((c for c in ("换手率", "换手率%") if c in frame.columns), None)
     name_col = next((c for c in ("指数名称", "行业名称", "名称") if c in frame.columns), None)
     date_col = _sw_date_column(frame)
@@ -55,25 +76,57 @@ def _normalize_sw_targets(frame: pd.DataFrame, target_codes: dict[str, str], mar
         selected = frame[codes.str.startswith(str(code))].copy()
         if selected.empty:
             continue
+        row_date = None
         if date_col:
             selected["__date"] = pd.to_datetime(selected[date_col], errors="coerce")
             selected = selected.sort_values("__date")
         row = selected.iloc[-1]
+        if date_col and pd.notna(row.get("__date")):
+            row_date = pd.Timestamp(row["__date"]).strftime("%Y-%m-%d")
         amount = _number(row[amount_col]) if amount_col else None
+        share_raw = _number(row[share_col]) if share_col else None
+        share = share_raw / 100 if share_raw is not None else None
         turnover_raw = _number(row[turnover_col]) if turnover_col else None
         turnover = turnover_raw / 100 if turnover_raw is not None else None
+        # Only derive amount from the current market denominator when dates match.
+        if amount is None and share is not None and row_date == target_date and market_amount_100m:
+            amount = share * market_amount_100m
+        if share is None and amount is not None and row_date == target_date and market_amount_100m:
+            share = amount / market_amount_100m
         out[label] = {
+            "date": row_date,
             "code": code,
             "name": str(row[name_col]) if name_col else label,
             "amount_100m": amount,
-            "amount_share_of_a": amount / market_amount_100m if amount is not None and market_amount_100m else None,
+            "amount_share_of_a": share,
             "turnover": turnover,
+            "share_source": "申万官方成交额占比" if share_raw is not None else "derived",
         }
     return out
 
 
-def _validation(target_date: str, market: dict[str, object], indices: list[dict[str, object]], hot: list[dict[str, object]], sw_targets: dict[str, dict[str, object]], innovation_latest: dict[str, object] | None) -> dict[str, object]:
+def _combine_sw_targets(sw_targets: dict[str, dict[str, object]]) -> dict[str, object]:
+    amounts = [value.get("amount_100m") for value in sw_targets.values()]
+    shares = [value.get("amount_share_of_a") for value in sw_targets.values()]
+    complete_amounts = len(amounts) == 4 and all(value is not None for value in amounts)
+    valid_shares = [float(value) for value in shares if value is not None]
+    return {
+        "amount_100m": sum(float(value) for value in amounts if value is not None) if complete_amounts else None,
+        "amount_share_of_a": sum(valid_shares) if valid_shares else None,
+    }
+
+
+def _validation(
+    target_date: str,
+    market: dict[str, object],
+    indices: list[dict[str, object]],
+    hot: list[dict[str, object]],
+    sw_targets: dict[str, dict[str, object]],
+    innovation_latest: dict[str, object] | None,
+    mapping_available: bool,
+) -> dict[str, object]:
     checks: list[dict[str, object]] = []
+
     def add(name: str, ok: bool, level: str, detail: str) -> None:
         checks.append({"name": name, "ok": ok, "level": level, "detail": detail})
 
@@ -86,17 +139,25 @@ def _validation(target_date: str, market: dict[str, object], indices: list[dict[
     index_ok = all(item.get("close") is not None and item.get("date") == target_date for item in indices)
     add("indices", index_ok, "WARN", "; ".join(f"{x['name']}={x.get('status')}" for x in indices))
     add("sw_targets", len(sw_targets) >= 4, "WARN", f"{len(sw_targets)} targets")
-    add("innovation_latest", innovation_latest is not None, "WARN", str(innovation_latest.get("date") if innovation_latest else None))
+    innovation_ok = innovation_latest is not None and innovation_latest.get("date") == target_date
+    add("innovation_current", innovation_ok, "WARN", str(innovation_latest.get("date") if innovation_latest else None))
+    add("sw_mapping_cache", mapping_available, "WARN", "available" if mapping_available else "not initialized; weekly refresh required")
 
     failed = [c for c in checks if not c["ok"] and c["level"] == "FAIL"]
     warned = [c for c in checks if not c["ok"] and c["level"] == "WARN"]
     return {"date": target_date, "status": "FAIL" if failed else ("WARN" if warned else "PASS"), "checks": checks}
 
 
-def run(target_date: str, config_path: Path = Path("config/market_monitor.json"), root: Path = Path("."), refresh_mapping: bool = False) -> dict[str, object]:
+def run(
+    target_date: str,
+    config_path: Path = Path("config/market_monitor.json"),
+    root: Path = Path("."),
+    refresh_mapping: bool = False,
+) -> dict[str, object]:
     config = load_json(root / config_path)
     paths = _paths(root, target_date)
 
+    # Core market snapshot: this is the only mandatory upstream module.
     spot = fetch_a_share_spot()
     limit_up, limit_down = infer_limit_counts(spot)
     advance = int((spot["return"] > 0).sum())
@@ -104,8 +165,14 @@ def run(target_date: str, config_path: Path = Path("config/market_monitor.json")
     flat = int((spot["return"] == 0).sum())
     total_amount = float(spot["amount_100m"].sum())
 
-    mapping, mapping_refreshed = load_or_refresh_mapping(paths.cache_dir / "sw_stock_mapping.csv", stale_days=int(config["mapping_refresh_days"]), force=refresh_mapping)
-    hot_frame = spot[spot["amount_100m"] >= float(config["hot_stock_threshold_100m"])].copy().sort_values(["amount_100m", "stock_code"], ascending=[False, True])
+    mapping, mapping_refreshed = load_or_refresh_mapping(
+        paths.cache_dir / "sw_stock_mapping.csv",
+        stale_days=int(config["mapping_refresh_days"]),
+        force=refresh_mapping,
+    )
+    mapping_available = not mapping.empty
+    hot_frame = spot[spot["amount_100m"] >= float(config["hot_stock_threshold_100m"])].copy()
+    hot_frame = hot_frame.sort_values(["amount_100m", "stock_code"], ascending=[False, True])
     hot_frame = hot_frame.merge(mapping, on="stock_code", how="left")
     hot_frame[["sw_level1", "sw_level2"]] = hot_frame[["sw_level1", "sw_level2"]].fillna("未匹配")
     hot_frame.insert(0, "rank", range(1, len(hot_frame) + 1))
@@ -113,55 +180,118 @@ def run(target_date: str, config_path: Path = Path("config/market_monitor.json")
     hot_amount = float(hot_frame["amount_100m"].sum())
 
     market = {
-        "date": target_date, "advance": advance, "decline": decline, "flat": flat,
-        "limit_up": int(limit_up), "limit_down": int(limit_down), "effective_stocks": int(len(spot)),
-        "total_amount_100m": total_amount, "hot_count": int(len(hot_frame)), "hot_amount_100m": hot_amount,
+        "date": target_date,
+        "advance": advance,
+        "decline": decline,
+        "flat": flat,
+        "limit_up": int(limit_up),
+        "limit_down": int(limit_down),
+        "effective_stocks": int(len(spot)),
+        "total_amount_100m": total_amount,
+        "hot_count": int(len(hot_frame)),
+        "hot_amount_100m": hot_amount,
         "hot_concentration": hot_amount / total_amount if total_amount else None,
         "market_breadth": (advance - decline) / (advance + decline) if advance + decline else None,
     }
     market_history = update_market_history(paths.history_dir / "market_core.csv", market)
-    indices = fetch_indices(target_date, config["indices"])
 
+    # Optional modules are isolated: failures become validation warnings, not report failure.
+    indices = fetch_indices(target_date, config["indices"])
     sw_raw = fetch_sw_analysis(target_date)
     sw_raw.to_csv(paths.output_dir / "sw_analysis_daily_second.csv", index=False, encoding="utf-8-sig")
-    sw_targets = _normalize_sw_targets(sw_raw, config["sw_crowding_codes"], total_amount)
+    sw_targets = _normalize_sw_targets(sw_raw, config["sw_crowding_codes"], target_date, total_amount)
     sw_date = _sw_latest_date(sw_raw)
 
-    innovation = update_innovation_history(target_date, paths.history_dir / "innovation_drug_886015.csv", config["history_start"])
+    innovation = update_innovation_history(
+        target_date,
+        paths.history_dir / "innovation_drug_886015.csv",
+        config["history_start"],
+    )
+    innovation_current = fetch_innovation_current_ths(target_date)
     innovation_latest = None
+    innovation_history_latest_date = None
     if not innovation.empty:
         innovation_export = innovation.copy()
         innovation_export["date"] = innovation_export["日期"].dt.strftime("%Y-%m-%d")
+        innovation_export["amount_100m"] = innovation_export["成交额"] / 1e8
         denominator = market_history.rename(columns={"total_amount_100m": "market_amount_100m"})[["date", "market_amount_100m"]]
         innovation_export = innovation_export.merge(denominator, on="date", how="left")
-        innovation_export["amount_share_of_a"] = innovation_export["成交额"] / innovation_export["market_amount_100m"]
-        innovation_export.to_csv(paths.history_dir / "innovation_drug_enriched.csv", index=False, encoding="utf-8-sig", float_format="%.10f")
+        innovation_export["amount_share_of_a"] = innovation_export["amount_100m"] / innovation_export["market_amount_100m"]
+        innovation_export.to_csv(
+            paths.history_dir / "innovation_drug_enriched.csv",
+            index=False,
+            encoding="utf-8-sig",
+            float_format="%.10f",
+        )
         latest = innovation_export[innovation_export["date"] <= target_date].sort_values("date").tail(1)
         if not latest.empty:
             row = latest.iloc[0]
+            innovation_history_latest_date = str(row["date"])
             innovation_latest = {
-                "date": str(row["date"]), "amount_100m": _number(row["成交额"]),
-                "amount_share_of_a": _number(row["amount_share_of_a"]), "turnover": None,
-                "volume_activity_20d": _number(row["20日成交量活跃度代理"]), "return": _number(row["日收益率"]),
-                "volume": _number(row["成交量"]), "topic_code": config["innovation_drug"]["code"],
+                "date": str(row["date"]),
+                "amount_100m": _number(row["amount_100m"]),
+                "amount_share_of_a": _number(row["amount_share_of_a"]),
+                "turnover": None,
+                "volume_activity_20d": _number(row["20日成交量活跃度代理"]),
+                "return": _number(row["日收益率"]),
+                "volume": _number(row["成交量"]),
+                "topic_code": config["innovation_drug"]["code"],
                 "source": config["innovation_drug"]["source"],
                 "turnover_status": "板块历史总流通股本缺少可靠可比序列，正式换手率保持空白",
             }
+    if innovation_current is not None:
+        innovation_latest = {
+            "date": target_date,
+            "amount_100m": innovation_current.get("amount_100m"),
+            "amount_share_of_a": (float(innovation_current["amount_100m"]) / total_amount) if innovation_current.get("amount_100m") is not None and total_amount else None,
+            "turnover": None,
+            "volume_activity_20d": None,
+            "return": innovation_current.get("return"),
+            "volume": None,
+            "topic_code": config["innovation_drug"]["code"],
+            "source": innovation_current.get("source"),
+            "history_latest_date": innovation_history_latest_date,
+            "turnover_status": "同花顺主题快照无板块总换手率；历史正式换手率保持空白",
+        }
 
-    combined_amount = sum(value["amount_100m"] or 0 for value in sw_targets.values())
+    combined = _combine_sw_targets(sw_targets)
     payload = {
-        "schema_version": "1.0", "date": target_date, "market": market,
-        "indices": {item["name"]: item for item in indices}, "hot_stocks": hot_records,
-        "sw_crowding": {"date": sw_date, "targets": sw_targets, "combined": {"amount_100m": combined_amount, "amount_share_of_a": combined_amount / total_amount if total_amount else None}},
+        "schema_version": "1.0",
+        "date": target_date,
+        "market": market,
+        "indices": {item["name"]: item for item in indices},
+        "hot_stocks": hot_records,
+        "sw_crowding": {"date": sw_date, "targets": sw_targets, "combined": combined},
         "innovation_drug": innovation_latest,
         "rendering": {"table_order": "descending", "chart_time_order": "ascending"},
     }
-    validation = _validation(target_date, market, indices, hot_records, sw_targets, innovation_latest)
+    validation = _validation(
+        target_date,
+        market,
+        indices,
+        hot_records,
+        sw_targets,
+        innovation_latest,
+        mapping_available,
+    )
     manifest = {
-        "date": target_date, "pipeline_version": "0.1.0",
-        "sources": {"a_share_snapshot": "AKShare stock_zh_a_spot / 新浪", "indices": "东方财富历史K线", "sw_analysis": "AKShare index_analysis_daily_sw / 申万", "innovation_drug": "同花顺创新药概念指数 886015", "sw_mapping": "AKShare sw_index_second_info + index_component_sw"},
-        "cache": {"sw_mapping_refreshed": mapping_refreshed, "sw_mapping_available": not mapping.empty, "market_history": str(paths.history_dir / "market_core.csv"), "innovation_history": str(paths.history_dir / "innovation_drug_886015.csv")},
+        "date": target_date,
+        "pipeline_version": "0.1.0",
+        "sources": {
+            "a_share_snapshot": "AKShare stock_zh_a_spot / 新浪",
+            "indices": "东方财富历史K线; 失败时回退 AKShare stock_zh_index_spot_em",
+            "sw_analysis": "AKShare index_analysis_daily_sw / 申万",
+            "innovation_drug": "同花顺创新药概念指数/当日概念简介",
+            "sw_mapping": "AKShare sw_index_second_info + index_component_sw",
+        },
+        "cache": {
+            "sw_mapping_refreshed": mapping_refreshed,
+            "sw_mapping_available": mapping_available,
+            "market_history": str(paths.history_dir / "market_core.csv"),
+            "innovation_history": str(paths.history_dir / "innovation_drug_886015.csv"),
+        },
     }
+
     write_json(paths.output_dir / "daily_payload.json", payload)
     write_json(paths.output_dir / "validation.json", validation)
     write_json(paths.output_dir / "source_manifest.json", manifest)
