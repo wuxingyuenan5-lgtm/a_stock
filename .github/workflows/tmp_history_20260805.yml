@@ -1,4 +1,4 @@
-name: Temporary Historical Core 20260805
+name: Temporary Historical Core Current
 
 on:
   pull_request:
@@ -22,11 +22,12 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt baostock
-      - run: python rebuild_daily_core_history_v3.py --start-date 2026-08-05 --end-date 2026-08-05 --workers 8
+      - run: python rebuild_daily_core_history_v3.py --start-date 2026-08-07 --end-date 2026-08-10 --workers 8
+      - run: python fetch_innovation_drug_history.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: historical-core-20260805
+          name: historical-core-20260810
           path: |
             data/daily_core_history_2026.csv
             data/hot_turnover_industry_history_long_2026.csv
@@ -34,4 +35,5 @@ jobs:
             data/sw_crowding_history_2026.csv
             data/rebuild_daily_core_quality_2026.csv
             data/daily_stock_history_2026.csv
+            data/innovation_drug_history_2026.csv
           if-no-files-found: warn
