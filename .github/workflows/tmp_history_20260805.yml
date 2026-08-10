@@ -22,8 +22,9 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt baostock
-      - run: python rebuild_daily_core_history_v3.py --start-date 2026-08-07 --end-date 2026-08-10 --workers 8
+      - run: python rebuild_daily_core_history_v4.py --start-date 2026-08-07 --end-date 2026-08-10 --workers 8
       - run: python fetch_innovation_drug_history.py
+        if: always()
       - uses: actions/upload-artifact@v4
         if: always()
         with:
