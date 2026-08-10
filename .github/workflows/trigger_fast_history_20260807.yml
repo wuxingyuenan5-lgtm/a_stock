@@ -1,0 +1,8 @@
+name: Trigger Fast History 20260807
+on:
+  workflow_dispatch:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo fast-history-20260807
