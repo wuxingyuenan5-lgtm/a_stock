@@ -167,3 +167,4 @@ bk=fetch_bk1106(); bk.to_csv(OUT/'innovation_drug_BK1106_2026.csv',index=False,e
 meta={'target':TARGET,'hist':HIST,'spot_rows':len(spot),'hist7_rows':len(hist7),'hist7_errors':len(err7),'bk_rows':len(bk),'sw_rows':len(sw)}
 (OUT/'metadata.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding='utf-8')
 print(json.dumps(meta,ensure_ascii=False),flush=True)
+# trigger 2026-08-10 one-off after workflow creation
