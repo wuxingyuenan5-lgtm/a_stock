@@ -1,0 +1,28 @@
+name: Innovation Drug Constituents EM
+on:
+  pull_request:
+    paths:
+      - .github/workflows/trigger_innovation_cons_em.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cons:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python fetch_innovation_cons_em.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: innovation-cons-em-20260810
+          path: data/innovation_drug_cons_em_20260810.csv
+          if-no-files-found: warn
