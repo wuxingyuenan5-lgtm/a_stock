@@ -1,9 +1,9 @@
 name: Trigger Innovation Drug 20260810
 on:
   workflow_dispatch:
-# retry THS 886015 proxy: 2026-08-10 16:34 CST
+# retry split history/legacy constituents: 2026-08-10 16:42 CST
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo innovation-drug-20260810-ths
+      - run: echo innovation-drug-20260810-split
