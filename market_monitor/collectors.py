@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from typing import Any
 
 import akshare as ak
 import pandas as pd
@@ -12,6 +13,7 @@ from .common import append_history, ensure_dir, retry
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+INDEX_SPOT_GROUPS = ["沪深重要指数", "上证系列指数", "深证系列指数", "指数成份", "中证系列指数"]
 
 
 def _pick(frame: pd.DataFrame, *names: str) -> str:
@@ -19,6 +21,11 @@ def _pick(frame: pd.DataFrame, *names: str) -> str:
         if name in frame.columns:
             return name
     raise KeyError(f"missing {names}; actual={list(frame.columns)}")
+
+
+def _as_number(value: Any) -> float | None:
+    result = pd.to_numeric(value, errors="coerce")
+    return None if pd.isna(result) else float(result)
 
 
 def fetch_a_share_spot() -> pd.DataFrame:
@@ -87,17 +94,62 @@ def fetch_eastmoney_index(target_date: str, secid: str, name: str) -> dict[str, 
         if not rows:
             raise RuntimeError("empty kline")
         values = rows[-1].split(",")
-        return {"date": values[0], "name": name, "code": secid, "close": float(values[2]), "return": float(values[8]) / 100, "amount_100m": float(values[6]) / 1e8, "source": "东方财富历史接口", "status": "ok"}
-    return retry(request, attempts=5, delay=1.5)
+        return {
+            "date": values[0], "name": name, "code": secid, "close": float(values[2]),
+            "return": float(values[8]) / 100, "amount_100m": float(values[6]) / 1e8,
+            "source": "东方财富历史接口", "status": "ok",
+        }
+    return retry(request, attempts=4, delay=1.2)
+
+
+def _fetch_index_spot_pool() -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for group in INDEX_SPOT_GROUPS:
+        try:
+            frame = retry(lambda group=group: ak.stock_zh_index_spot_em(symbol=group), attempts=2, delay=1.0)
+        except Exception:
+            continue
+        if frame is not None and not frame.empty:
+            frames.append(frame.copy())
+    if not frames:
+        return pd.DataFrame()
+    pool = pd.concat(frames, ignore_index=True)
+    if "代码" in pool.columns:
+        pool["代码"] = pool["代码"].astype(str).str.extract(r"(\d{6})", expand=False)
+        pool = pool.drop_duplicates("代码", keep="first")
+    return pool
 
 
 def fetch_indices(target_date: str, definitions: list[dict[str, str]]) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
+    failed: list[tuple[int, dict[str, str], str]] = []
     for item in definitions:
         try:
             records.append(fetch_eastmoney_index(target_date, item["secid"], item["name"]))
         except Exception as exc:
+            failed.append((len(records), item, str(exc)))
             records.append({"date": target_date, "name": item["name"], "code": item["secid"], "close": None, "return": None, "amount_100m": None, "source": "东方财富历史接口", "status": f"error: {exc}"})
+    if failed:
+        pool = _fetch_index_spot_pool()
+        if not pool.empty and "代码" in pool.columns:
+            for position, item, original_error in failed:
+                code = item["secid"].split(".")[-1]
+                selected = pool[pool["代码"] == code]
+                if selected.empty:
+                    continue
+                row = selected.iloc[-1]
+                close = _as_number(row.get("最新价"))
+                pct = _as_number(row.get("涨跌幅"))
+                amount = _as_number(row.get("成交额"))
+                if close is None:
+                    continue
+                records[position] = {
+                    "date": target_date, "name": item["name"], "code": item["secid"],
+                    "close": close, "return": pct / 100 if pct is not None else None,
+                    "amount_100m": amount / 1e8 if amount is not None else None,
+                    "source": "AKShare stock_zh_index_spot_em / 东方财富实时指数",
+                    "status": f"fallback_ok; primary_error={original_error}",
+                }
     return records
 
 
@@ -107,11 +159,36 @@ def fetch_sw_analysis(target_date: str) -> pd.DataFrame:
     end = target.strftime("%Y%m%d")
     try:
         frame = retry(lambda: ak.index_analysis_daily_sw(symbol="二级行业", start_date=start, end_date=end), attempts=2, delay=2.0).copy()
-        if frame is None:
-            return pd.DataFrame()
-        return frame
+        return pd.DataFrame() if frame is None else frame
     except Exception:
         return pd.DataFrame()
+
+
+def fetch_innovation_current_ths(target_date: str) -> dict[str, object] | None:
+    """Current-day THS topic snapshot. It has amount/return but no board turnover."""
+    try:
+        frame = retry(lambda: ak.stock_board_concept_info_ths(symbol="创新药"), attempts=3, delay=1.5)
+    except Exception:
+        return None
+    if frame is None or frame.empty or not {"项目", "值"}.issubset(frame.columns):
+        return None
+    values = {str(row["项目"]).strip(): row["值"] for _, row in frame.iterrows()}
+    amount_raw = values.get("成交额(亿)")
+    return_raw = values.get("板块涨幅")
+    amount = _as_number(str(amount_raw).replace("亿", "")) if amount_raw is not None else None
+    if return_raw is None:
+        ret = None
+    else:
+        ret = _as_number(str(return_raw).replace("%", ""))
+        ret = ret / 100 if ret is not None else None
+    if amount is None and ret is None:
+        return None
+    return {
+        "date": target_date,
+        "amount_100m": amount,
+        "return": ret,
+        "source": "同花顺 stock_board_concept_info_ths",
+    }
 
 
 def update_innovation_history(target_date: str, history_path: Path, history_start: str) -> pd.DataFrame:
