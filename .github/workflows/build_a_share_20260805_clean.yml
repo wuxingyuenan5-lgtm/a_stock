@@ -1,0 +1,9 @@
+name: Trigger 20260810 Snapshot
+on:
+  workflow_dispatch:
+# trigger historical core + innovation drug refresh
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo trigger-20260810
