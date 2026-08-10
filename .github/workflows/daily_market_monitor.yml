@@ -8,12 +8,12 @@ on:
         required: false
         default: ""
       refresh_mapping:
-        description: "Force refresh Shenwan stock mapping"
+        description: "Force refresh Shenwan stock mapping (normally leave false; weekly job handles it)"
         required: false
         type: boolean
         default: false
   schedule:
-    - cron: "40 8 * * 1-5"
+    - cron: "50 8 * * 1-5"
   pull_request:
     paths:
       - run_daily.py
@@ -33,7 +33,7 @@ permissions:
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
       TZ: Asia/Shanghai
 
@@ -63,7 +63,7 @@ jobs:
 
       - name: Syntax and unit tests
         run: |
-          python -m py_compile run_daily.py
+          python -m py_compile run_daily.py refresh_sw_crowding.py refresh_sw_mapping.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
 
