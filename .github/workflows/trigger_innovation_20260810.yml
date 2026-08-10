@@ -1,8 +1,9 @@
 name: Trigger Innovation Drug 20260810
 on:
   workflow_dispatch:
+# retry direct BK1106: 2026-08-10 16:28 CST
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
-      - run: echo innovation-drug-20260810
+      - run: echo innovation-drug-20260810-direct
