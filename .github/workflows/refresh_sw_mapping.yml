@@ -1,0 +1,38 @@
+name: Refresh Shenwan Stock Mapping
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 1"
+
+concurrency:
+  group: refresh-sw-mapping
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile refresh_sw_mapping.py market_monitor/sw_mapping.py
+      - run: python refresh_sw_mapping.py
+      - name: Commit mapping cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cache/sw_stock_mapping.csv
+          if git diff --cached --quiet; then
+            echo "No mapping changes"
+          else
+            git commit -m "data: refresh Shenwan stock mapping"
+            git push
+          fi

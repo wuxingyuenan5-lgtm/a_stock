@@ -87,3 +87,27 @@ CSV 使用 UTF-8 BOM 编码，可直接用 Excel 打开。
 GitHub Actions 在每个工作日北京时间 16:30 自动运行，也支持在 Actions 页面手动执行。
 
 若当天是休市日，最新交易日不会变化，通常也不会产生新的数据提交。
+
+---
+
+# A股每日市场监控生产管线
+
+仓库新增统一生产入口：
+
+```bash
+python run_daily.py --target-date 2026-08-10
+```
+
+它负责一次性生产全A市场宽度、宽基指数、百亿成交股、申万四行业交易拥挤度和独立创新药主题数据，并输出统一的：
+
+```text
+output/YYYY-MM-DD/daily_payload.json
+output/YYYY-MM-DD/validation.json
+output/YYYY-MM-DD/source_manifest.json
+```
+
+每日历史采用增量追加，不再为正常更新重复抓取年初至今全部数据；申万个股行业映射使用7天缓存。
+
+正式工作流：`.github/workflows/daily_market_monitor.yml`，工作日北京时间16:40自动运行。
+
+完整生产设计见：`docs/DAILY_PIPELINE.md`。

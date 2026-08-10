@@ -1,0 +1,22 @@
+{
+  "history_start": "2026-01-05",
+  "hot_stock_threshold_100m": 100,
+  "mapping_refresh_days": 7,
+  "indices": [
+    {"name": "上证50", "secid": "1.000016"},
+    {"name": "Choice微盘", "secid": "47.800007"},
+    {"name": "中证全指", "secid": "1.000985"}
+  ],
+  "sw_crowding_codes": {
+    "通信设备": "801102",
+    "计算机设备": "801101",
+    "元件": "801083",
+    "半导体": "801081"
+  },
+  "innovation_drug": {
+    "name": "创新药",
+    "symbol": "创新药",
+    "code": "INNOVATION_DRUG_THEME",
+    "source": "东方财富主源 / 同花顺备用"
+  }
+}
