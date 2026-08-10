@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Any
 
 import pandas as pd
@@ -10,9 +11,11 @@ from .collectors import (
     fetch_a_share_spot,
     fetch_indices,
     fetch_innovation_current_em,
+    fetch_innovation_current_ths,
     fetch_sw_analysis,
     infer_limit_counts,
     update_innovation_history,
+    update_innovation_history_ths,
     update_market_history,
 )
 from .common import ensure_dir, load_json, write_json
@@ -61,7 +64,6 @@ def _normalize_sw_targets(
     target_date: str,
     market_amount_100m: float,
 ) -> dict[str, dict[str, object]]:
-    """Normalize official Shenwan turnover/share fields without mixing dates."""
     code_col = next((c for c in ("指数代码", "行业代码", "代码") if c in frame.columns), None)
     if frame.empty or code_col is None:
         return {}
@@ -148,16 +150,54 @@ def _validation(
     return {"date": target_date, "status": "FAIL" if failed else ("WARN" if warned else "PASS"), "checks": checks}
 
 
+def _prepare_innovation_history(
+    frame: pd.DataFrame,
+    market_history: pd.DataFrame,
+    target_date: str,
+    output_path: Path,
+) -> tuple[dict[str, object] | None, str | None]:
+    if frame.empty:
+        return None, None
+    export = frame.copy()
+    export["date"] = export["日期"].dt.strftime("%Y-%m-%d")
+    export["amount_100m"] = export["成交额"] / 1e8
+    denominator = market_history.rename(columns={"total_amount_100m": "market_amount_100m"})[["date", "market_amount_100m"]]
+    export = export.merge(denominator, on="date", how="left")
+    export["amount_share_of_a"] = export["amount_100m"] / export["market_amount_100m"]
+    export.to_csv(output_path, index=False, encoding="utf-8-sig", float_format="%.10f")
+    latest = export[export["date"] <= target_date].sort_values("date").tail(1)
+    if latest.empty:
+        return None, None
+    row = latest.iloc[0]
+    source = str(row.get("数据源") or "historical topic source")
+    latest_payload = {
+        "date": str(row["date"]),
+        "amount_100m": _number(row["amount_100m"]),
+        "amount_share_of_a": _number(row["amount_share_of_a"]),
+        "turnover": _number(row.get("换手率")),
+        "volume_activity_20d": _number(row["20日成交量活跃度代理"]),
+        "return": _number(row["日收益率"]),
+        "volume": _number(row["成交量"]),
+        "source": source,
+    }
+    return latest_payload, str(row["date"])
+
+
 def run(
     target_date: str,
     config_path: Path = Path("config/market_monitor.json"),
     root: Path = Path("."),
     refresh_mapping: bool = False,
 ) -> dict[str, object]:
+    started = time.perf_counter()
+    timings: dict[str, float] = {}
     config = load_json(root / config_path)
     paths = _paths(root, target_date)
 
+    t0 = time.perf_counter()
     spot = fetch_a_share_spot()
+    timings["market_snapshot_s"] = round(time.perf_counter() - t0, 3)
+    spot_source = str(spot["snapshot_source"].iloc[0]) if "snapshot_source" in spot.columns and not spot.empty else "unknown"
     limit_up, limit_down = infer_limit_counts(spot)
     advance = int((spot["return"] > 0).sum())
     decline = int((spot["return"] < 0).sum())
@@ -194,60 +234,61 @@ def run(
     }
     market_history = update_market_history(paths.history_dir / "market_core.csv", market)
 
+    t0 = time.perf_counter()
     indices = fetch_indices(target_date, config["indices"])
+    timings["indices_s"] = round(time.perf_counter() - t0, 3)
+
+    t0 = time.perf_counter()
     sw_raw = fetch_sw_analysis(target_date)
+    timings["sw_analysis_s"] = round(time.perf_counter() - t0, 3)
     sw_raw.to_csv(paths.output_dir / "sw_analysis_daily_second.csv", index=False, encoding="utf-8-sig")
     sw_targets = _normalize_sw_targets(sw_raw, config["sw_crowding_codes"], target_date, total_amount)
     sw_date = _sw_latest_date(sw_raw)
 
-    innovation_history_path = paths.history_dir / "innovation_drug_eastmoney.csv"
-    innovation = update_innovation_history(target_date, innovation_history_path, config["history_start"])
+    t0 = time.perf_counter()
+    em_path = paths.history_dir / "innovation_drug_eastmoney.csv"
+    ths_path = paths.history_dir / "innovation_drug_ths.csv"
+    innovation_history = update_innovation_history(target_date, em_path, config["history_start"])
+    history_mode = "eastmoney"
+    if innovation_history.empty:
+        innovation_history = update_innovation_history_ths(target_date, ths_path, config["history_start"])
+        history_mode = "ths" if not innovation_history.empty else "none"
+    innovation_latest, innovation_history_latest_date = _prepare_innovation_history(
+        innovation_history,
+        market_history,
+        target_date,
+        paths.history_dir / "innovation_drug_enriched.csv",
+    )
     innovation_current = fetch_innovation_current_em(target_date)
-    innovation_latest = None
-    innovation_history_latest_date = None
-    if not innovation.empty:
-        innovation_export = innovation.copy()
-        innovation_export["date"] = innovation_export["日期"].dt.strftime("%Y-%m-%d")
-        innovation_export["amount_100m"] = innovation_export["成交额"] / 1e8
-        denominator = market_history.rename(columns={"total_amount_100m": "market_amount_100m"})[["date", "market_amount_100m"]]
-        innovation_export = innovation_export.merge(denominator, on="date", how="left")
-        innovation_export["amount_share_of_a"] = innovation_export["amount_100m"] / innovation_export["market_amount_100m"]
-        innovation_export.to_csv(
-            paths.history_dir / "innovation_drug_enriched.csv",
-            index=False,
-            encoding="utf-8-sig",
-            float_format="%.10f",
-        )
-        latest = innovation_export[innovation_export["date"] <= target_date].sort_values("date").tail(1)
-        if not latest.empty:
-            row = latest.iloc[0]
-            innovation_history_latest_date = str(row["date"])
-            innovation_latest = {
-                "date": str(row["date"]),
-                "amount_100m": _number(row["amount_100m"]),
-                "amount_share_of_a": _number(row["amount_share_of_a"]),
-                "turnover": _number(row.get("换手率")),
-                "volume_activity_20d": _number(row["20日成交量活跃度代理"]),
-                "return": _number(row["日收益率"]),
-                "volume": _number(row["成交量"]),
-                "topic_code": config["innovation_drug"]["code"],
-                "source": config["innovation_drug"]["source"],
-                "turnover_status": "东方财富概念板块历史接口直接字段",
-            }
+    current_mode = "eastmoney"
+    if innovation_current is None:
+        innovation_current = fetch_innovation_current_ths(target_date)
+        current_mode = "ths" if innovation_current is not None else "none"
     if innovation_current is not None:
         innovation_latest = {
             "date": target_date,
             "amount_100m": innovation_current.get("amount_100m"),
             "amount_share_of_a": (float(innovation_current["amount_100m"]) / total_amount) if innovation_current.get("amount_100m") is not None and total_amount else None,
             "turnover": innovation_current.get("turnover"),
-            "volume_activity_20d": None,
+            "volume_activity_20d": innovation_latest.get("volume_activity_20d") if innovation_latest and innovation_history_latest_date == target_date else None,
             "return": innovation_current.get("return"),
-            "volume": None,
+            "volume": innovation_latest.get("volume") if innovation_latest and innovation_history_latest_date == target_date else None,
             "topic_code": config["innovation_drug"]["code"],
             "source": innovation_current.get("source"),
             "history_latest_date": innovation_history_latest_date,
-            "turnover_status": "东方财富概念板块实时接口直接字段",
+            "history_source_mode": history_mode,
+            "current_source_mode": current_mode,
+            "turnover_status": "供应商直接字段" if innovation_current.get("turnover") is not None else "当前备用源不提供板块总换手率",
         }
+    elif innovation_latest is not None:
+        innovation_latest.update({
+            "topic_code": config["innovation_drug"]["code"],
+            "history_latest_date": innovation_history_latest_date,
+            "history_source_mode": history_mode,
+            "current_source_mode": "none",
+            "turnover_status": "供应商直接字段" if innovation_latest.get("turnover") is not None else "历史备用源不提供板块总换手率",
+        })
+    timings["innovation_drug_s"] = round(time.perf_counter() - t0, 3)
 
     combined = _combine_sw_targets(sw_targets)
     payload = {
@@ -260,31 +301,26 @@ def run(
         "innovation_drug": innovation_latest,
         "rendering": {"table_order": "descending", "chart_time_order": "ascending"},
     }
-    validation = _validation(
-        target_date,
-        market,
-        indices,
-        hot_records,
-        sw_targets,
-        innovation_latest,
-        mapping_available,
-    )
+    validation = _validation(target_date, market, indices, hot_records, sw_targets, innovation_latest, mapping_available)
+    timings["total_s"] = round(time.perf_counter() - started, 3)
     manifest = {
         "date": target_date,
         "pipeline_version": "0.1.0",
         "sources": {
-            "a_share_snapshot": "AKShare stock_zh_a_spot / 新浪",
-            "indices": "东方财富历史K线; 失败时回退 AKShare stock_zh_index_spot_em",
+            "a_share_snapshot": spot_source,
+            "indices": {item["name"]: item.get("source") for item in indices},
             "sw_analysis": "AKShare index_analysis_daily_sw / 申万",
-            "innovation_drug": "东方财富创新药概念板块历史/实时",
+            "innovation_drug": {"history_mode": history_mode, "current_mode": current_mode},
             "sw_mapping": "AKShare sw_index_second_info + index_component_sw",
         },
         "cache": {
             "sw_mapping_refreshed": mapping_refreshed,
             "sw_mapping_available": mapping_available,
             "market_history": str(paths.history_dir / "market_core.csv"),
-            "innovation_history": str(innovation_history_path),
+            "innovation_history_eastmoney": str(em_path),
+            "innovation_history_ths": str(ths_path),
         },
+        "timings_seconds": timings,
     }
 
     write_json(paths.output_dir / "daily_payload.json", payload)
