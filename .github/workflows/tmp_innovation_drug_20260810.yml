@@ -12,7 +12,7 @@ permissions:
 jobs:
   innovation:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,9 +22,14 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python fetch_innovation_drug_history.py
+      - run: python fetch_innovation_drug_history_only.py
+      - run: pip install --force-reinstall 'akshare==1.14.16' 'pandas<3'
+      - run: python fetch_innovation_drug_cons_old.py
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: innovation-drug-history-20260810
-          path: data/innovation_drug_history_2026.csv
-          if-no-files-found: error
+          path: |
+            data/innovation_drug_history_raw_2026.csv
+            data/innovation_drug_constituents_20260810.csv
+          if-no-files-found: warn
