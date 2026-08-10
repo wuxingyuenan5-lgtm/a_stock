@@ -18,6 +18,7 @@ on:
     paths:
       - run_daily.py
       - market_monitor/**
+      - tests/**
       - config/market_monitor.json
       - requirements.txt
       - .github/workflows/daily_market_monitor.yml
@@ -60,10 +61,11 @@ jobs:
           fi
           echo "value=$target" >> "$GITHUB_OUTPUT"
 
-      - name: Syntax check
+      - name: Syntax and unit tests
         run: |
           python -m py_compile run_daily.py
           python -m py_compile market_monitor/*.py
+          python -m unittest discover -s tests -v
 
       - name: Produce normalized payload
         shell: bash
