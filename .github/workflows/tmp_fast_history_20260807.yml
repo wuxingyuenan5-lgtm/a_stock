@@ -1,0 +1,34 @@
+name: Fast Historical Core 20260807
+on:
+  pull_request:
+    paths:
+      - .github/workflows/trigger_fast_history_20260807.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: optimize-market-dashboard-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt baostock
+      - run: python rebuild_daily_core_history_v4.py --start-date 2026-08-07 --end-date 2026-08-07 --workers 32
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fast-history-20260807
+          path: |
+            data/daily_core_history_2026.csv
+            data/hot_turnover_industry_history_long_2026.csv
+            data/hot_turnover_industry_history_wide_2026.csv
+            data/sw_crowding_history_2026.csv
+            data/rebuild_daily_core_quality_2026.csv
+            data/daily_stock_history_2026.csv
+          if-no-files-found: warn
