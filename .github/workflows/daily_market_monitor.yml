@@ -14,10 +14,17 @@ on:
         default: false
   schedule:
     - cron: "40 8 * * 1-5"
+  pull_request:
+    paths:
+      - run_daily.py
+      - market_monitor/**
+      - config/market_monitor.json
+      - requirements.txt
+      - .github/workflows/daily_market_monitor.yml
 
 concurrency:
-  group: daily-market-monitor
-  cancel-in-progress: false
+  group: daily-market-monitor-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -76,6 +83,7 @@ jobs:
           retention-days: 30
 
       - name: Persist incremental histories and JSON archive
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
