@@ -18,6 +18,7 @@ on:
     paths:
       - run_daily.py
       - prepare_render_bundle.py
+      - excel_renderer_artifact.py
       - market_monitor/**
       - tests/**
       - config/market_monitor.json
