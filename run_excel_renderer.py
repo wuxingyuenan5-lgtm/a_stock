@@ -94,7 +94,20 @@ def update_04_fixed(wb, payload: dict) -> dict:
     }
 
 
+_original_sync_00 = core.sync_00
+
+
+def sync_00_fixed(wb, payload: dict, market_rows: list[dict], innovation) -> None:
+    _original_sync_00(wb, payload, market_rows, innovation)
+    sh = wb.worksheets.get_item("00_市场总览")
+    sh.get_range("C30:D30").format.number_format = "0.00%"
+    sh.get_range("E30").format.number_format = "0.00x"
+    sh.get_range("F30").format.number_format = "0.00%"
+    sh.get_range("H30").format.wrap_text = True
+
+
 core.update_04 = update_04_fixed
+core.sync_00 = sync_00_fixed
 
 
 if __name__ == "__main__":
