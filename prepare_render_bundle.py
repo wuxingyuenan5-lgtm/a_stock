@@ -84,6 +84,11 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
 
     market_amounts = _market_amount_map(root / "data" / "history" / "market_core.csv")
     normalized = _normalize_history(_read_csv(history_path), mode, market_amounts)
+    share_rows = sum(1 for row in normalized if row["amount_share_of_a"] is not None)
+    target_row = next((row for row in normalized if row["date"] == target_date), None)
+    if target_row is not None and target_row["amount_100m"] is not None and target_row["amount_share_of_a"] is None:
+        raise RuntimeError(f"market_core missing target-date denominator for innovation history: {target_date}")
+
     destination = output_dir / "innovation_history_selected.csv"
     fieldnames = [
         "date",
@@ -106,6 +111,8 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
         "renderer_bundle_version": "1.0",
         "innovation_history_source_mode": mode,
         "innovation_history_rows": len(normalized),
+        "innovation_history_share_rows": share_rows,
+        "market_core_rows": len(market_amounts),
         "files": {
             "payload": "daily_payload.json",
             "validation": "validation.json",
@@ -118,7 +125,10 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
         json.dumps(render_manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"render bundle ready date={target_date} innovation_mode={mode} rows={len(normalized)}")
+    print(
+        f"render bundle ready date={target_date} innovation_mode={mode} "
+        f"rows={len(normalized)} share_rows={share_rows} market_core_rows={len(market_amounts)}"
+    )
     return destination
 
 
