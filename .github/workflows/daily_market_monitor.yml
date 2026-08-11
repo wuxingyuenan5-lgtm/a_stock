@@ -26,7 +26,6 @@ on:
       - config/excel_renderer.json
       - requirements.txt
       - .github/workflows/daily_market_monitor.yml
-      - .github/workflows/refresh_sw_crowding.yml
 
 concurrency:
   group: daily-market-monitor-${{ github.ref }}
@@ -38,7 +37,7 @@ permissions:
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       TZ: Asia/Shanghai
 
@@ -71,6 +70,9 @@ jobs:
           python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
+
+      - name: Refresh Shenwan cache once
+        run: python refresh_sw_crowding.py
 
       - name: Produce normalized payload
         shell: bash
