@@ -13,14 +13,10 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "38,48,58 15 * * 1-5"
-      timezone: "Asia/Shanghai"
-    - cron: "8,18,28,38,48,58 16-19 * * 1-5"
-      timezone: "Asia/Shanghai"
+    - cron: "15 9 * * 1-5"
   pull_request:
     paths:
       - run_daily.py
-      - check_report_readiness.py
       - prepare_render_bundle.py
       - excel_renderer_artifact.py
       - run_excel_renderer.py
@@ -50,6 +46,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Resolve date
         id: date
         shell: bash
@@ -61,90 +66,13 @@ jobs:
           fi
           echo "value=$target" >> "$GITHUB_OUTPUT"
 
-      - name: Sync latest main data caches
-        if: github.event_name != 'pull_request'
-        run: git pull --ff-only origin main
-
-      - name: Skip scheduled rerun after publication
-        id: published
-        shell: bash
-        run: |
-          marker="output/${{ steps.date.outputs.value }}/published.json"
-          if [ "${{ github.event_name }}" = "schedule" ] && [ -f "$marker" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Already published: $marker"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Python
-        if: steps.published.outputs.skip != 'true'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install dependencies
-        if: steps.published.outputs.skip != 'true'
-        run: pip install -r requirements.txt
-
       - name: Syntax and unit tests
-        if: steps.published.outputs.skip != 'true'
         run: |
-          python -m py_compile run_daily.py check_report_readiness.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py
+          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
 
-      - name: Check Shenwan cache readiness before full collection
-        if: steps.published.outputs.skip != 'true'
-        id: swgate
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          set +e
-          python - "${{ steps.date.outputs.value }}" <<'PY'
-          import csv, sys
-          from datetime import datetime
-          from pathlib import Path
-
-          target = sys.argv[1]
-          path = Path("data/cache/sw_analysis_daily_second.csv")
-          if not path.exists():
-              print("Shenwan cache missing")
-              raise SystemExit(3)
-          with path.open("r", encoding="utf-8-sig", newline="") as f:
-              rows = list(csv.DictReader(f))
-          date_col = next((c for c in ("发布日期", "日期", "date") if rows and c in rows[0]), None)
-          if not date_col:
-              print("Shenwan cache has no date column")
-              raise SystemExit(3)
-          dates = []
-          for row in rows:
-              value = (row.get(date_col) or "").strip()[:10]
-              try:
-                  datetime.strptime(value, "%Y-%m-%d")
-                  dates.append(value)
-              except Exception:
-                  pass
-          latest = max(dates) if dates else None
-          print(f"Shenwan cache latest={latest} target={target}")
-          raise SystemExit(0 if latest == target else 3)
-          PY
-          code=$?
-          set -e
-          if [ "$code" -eq 0 ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          elif [ "$code" -eq 3 ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            exit "$code"
-          fi
-
       - name: Produce normalized payload
-        if: steps.published.outputs.skip != 'true' && steps.swgate.outputs.ready == 'true'
         shell: bash
         run: |
           extra=""
@@ -153,64 +81,10 @@ jobs:
           fi
           python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
 
-      - name: Strict publication readiness gate
-        if: steps.published.outputs.skip != 'true' && steps.swgate.outputs.ready == 'true'
-        id: readiness
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          set +e
-          python check_report_readiness.py --target-date "${{ steps.date.outputs.value }}"
-          code=$?
-          set -e
-          if [ "$code" -eq 0 ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          elif [ "$code" -eq 3 ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Sources are not all ready yet; next scheduled probe will retry."
-          else
-            exit "$code"
-          fi
-
       - name: Prepare Excel renderer bundle
-        if: steps.published.outputs.skip != 'true' && steps.swgate.outputs.ready == 'true' && steps.readiness.outputs.ready == 'true'
         run: python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
 
-      - name: Record first-ready time and publication marker
-        if: github.event_name != 'pull_request' && steps.published.outputs.skip != 'true' && steps.readiness.outputs.ready == 'true'
-        shell: bash
-        run: |
-          python - "${{ steps.date.outputs.value }}" <<'PY'
-          import csv, json, sys
-          from pathlib import Path
-
-          target = sys.argv[1]
-          out = Path("output") / target
-          readiness = json.loads((out / "readiness.json").read_text(encoding="utf-8"))
-          history = Path("data/history/readiness_probe.csv")
-          history.parent.mkdir(parents=True, exist_ok=True)
-          existing = []
-          if history.exists():
-              with history.open("r", encoding="utf-8-sig", newline="") as f:
-                  existing = list(csv.DictReader(f))
-          if not any(row.get("date") == target for row in existing):
-              with history.open("a", encoding="utf-8", newline="") as f:
-                  writer = csv.writer(f)
-                  if history.stat().st_size == 0:
-                      writer.writerow(["date", "ready_at", "validation_status", "notes"])
-                  writer.writerow([target, readiness["observed_at"], readiness.get("validation_status"), "all required sources ready"])
-          (out / "published.json").write_text(json.dumps({
-              "date": target,
-              "ready_at": readiness["observed_at"],
-              "status": "ready_for_excel_renderer",
-          }, ensure_ascii=False, indent=2), encoding="utf-8")
-          PY
-
       - name: Upload production artifact
-        if: steps.published.outputs.skip != 'true' && steps.swgate.outputs.ready == 'true' && steps.readiness.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: a-share-monitor-${{ steps.date.outputs.value }}
@@ -219,7 +93,7 @@ jobs:
           retention-days: 30
 
       - name: Persist incremental histories and JSON archive
-        if: github.event_name != 'pull_request' && steps.published.outputs.skip != 'true' && steps.readiness.outputs.ready == 'true'
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
