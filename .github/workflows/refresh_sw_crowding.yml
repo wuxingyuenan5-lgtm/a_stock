@@ -3,7 +3,10 @@ name: Refresh Shenwan Crowding Cache
 on:
   workflow_dispatch:
   schedule:
-    - cron: "35 8 * * 1-5"
+    - cron: "33,43,53 15 * * 1-5"
+      timezone: "Asia/Shanghai"
+    - cron: "3,13,23,33,43,53 16-19 * * 1-5"
+      timezone: "Asia/Shanghai"
 
 concurrency:
   group: refresh-sw-crowding
@@ -26,8 +29,23 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m py_compile refresh_sw_crowding.py market_monitor/sw_cache.py
-      - run: python refresh_sw_crowding.py
+      - name: Probe Shenwan daily analysis
+        id: probe
+        shell: bash
+        run: |
+          set +e
+          python refresh_sw_crowding.py
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Shenwan daily analysis is not ready yet; keep previous cache and wait for next probe."
+          fi
       - name: Commit cache
+        if: steps.probe.outputs.ready == 'true'
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -36,5 +54,6 @@ jobs:
             echo "No Shenwan crowding changes"
           else
             git commit -m "data: refresh Shenwan crowding cache"
+            git pull --rebase origin main
             git push
           fi
