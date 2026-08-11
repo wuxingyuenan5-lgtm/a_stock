@@ -1,0 +1,84 @@
+{
+  "renderer_version": "1.0",
+  "template": {
+    "file_library_name": "A股每日市场监控_优化版_20260810.xlsx",
+    "sha256": "8d02be03f928cacf082cbdaa4e56dbd0ef98969fa1f53f99b174a154d9a58869",
+    "required_sheets": [
+      "00_市场总览",
+      "01_申万行业",
+      "02_统一历史数据",
+      "03_市场宽度图",
+      "04_百亿成交历史",
+      "05_申万行业资金拥挤度",
+      "06_综合拥挤度_辅助",
+      "07_创新药交易拥挤度",
+      "99_口径与质量"
+    ]
+  },
+  "bundle": {
+    "required_files": [
+      "daily_payload.json",
+      "validation.json",
+      "source_manifest.json",
+      "hot_stocks.csv",
+      "render_bundle_manifest.json"
+    ],
+    "optional_files": [
+      "innovation_history_selected.csv",
+      "sw_analysis_daily_second.csv"
+    ]
+  },
+  "sheet_contracts": {
+    "02_统一历史数据": {
+      "header_row": 5,
+      "first_data_row": 6,
+      "order": "date_desc",
+      "upsert_key": "date",
+      "derived_formula_columns": ["P", "Q", "R", "S"]
+    },
+    "03_市场宽度图": {
+      "chart_order": "date_asc",
+      "source_sheet": "02_统一历史数据",
+      "charts": ["上涨与下跌家数", "涨停与跌停家数", "市场宽度"]
+    },
+    "04_百亿成交历史": {
+      "matrix_header_row": 5,
+      "matrix_recent_dates": 6,
+      "long_table_header_row": 22,
+      "long_table_first_data_row": 23,
+      "threshold_100m": 100,
+      "order": "date_desc_rank_asc"
+    },
+    "05_申万行业资金拥挤度": {
+      "first_data_row": 63,
+      "order": "date_desc",
+      "required_target_count": 4,
+      "update_only_when_official_payload_available": true
+    },
+    "07_创新药交易拥挤度": {
+      "header_row": 32,
+      "first_data_row": 33,
+      "order": "date_desc",
+      "history_rule": "single_source_only",
+      "preferred_chart_metric": "turnover",
+      "fallback_chart_metric": "volume_activity_20d"
+    },
+    "99_口径与质量": {
+      "must_record_renderer_version": true,
+      "must_record_payload_validation_status": true,
+      "must_record_missing_modules": true
+    }
+  },
+  "missing_data_policy": {
+    "never_replace_missing_with_zero": true,
+    "never_cross_fill_sources": true,
+    "same_date_rerun_preserve_verified_non_null_when_payload_null": true,
+    "new_date_payload_null_remains_blank": true,
+    "sw_missing_keeps_last_official_effective_date": true,
+    "innovation_source_change_requires_full_selected_history": true
+  },
+  "output": {
+    "filename_pattern": "A股每日市场监控_YYYYMMDD.xlsx",
+    "formula_error_scan": "#REF!|#DIV/0!|#VALUE!|#NAME?|#N/A"
+  }
+}
