@@ -47,15 +47,14 @@ def _normalize_history(rows: list[dict[str, str]], mode: str, market_amounts: di
         if not date:
             continue
         raw_amount = _float(row.get("成交额"))
-        if mode == "eastmoney":
-            amount_100m = raw_amount / 1e8 if raw_amount is not None else None
-        elif mode == "ths":
-            # stock_board_concept_index_ths historical turnover amount is already in 亿元.
-            amount_100m = raw_amount
-        else:
-            amount_100m = None
+        # Both Eastmoney BK1106 and THS concept-index history expose turnover amount in yuan.
+        amount_100m = raw_amount / 1e8 if raw_amount is not None and mode in {"eastmoney", "ths"} else None
         market_amount = market_amounts.get(date)
         share = amount_100m / market_amount if amount_100m is not None and market_amount else None
+        if share is not None and not (0 <= share <= 1.0):
+            raise RuntimeError(
+                f"innovation amount share out of range; check source unit: date={date} mode={mode} share={share}"
+            )
         normalized.append({
             "date": date,
             "amount_100m": amount_100m,
@@ -91,15 +90,8 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
 
     destination = output_dir / "innovation_history_selected.csv"
     fieldnames = [
-        "date",
-        "amount_100m",
-        "amount_share_of_a",
-        "turnover",
-        "volume_activity_20d",
-        "return",
-        "volume",
-        "source",
-        "history_source_mode",
+        "date", "amount_100m", "amount_share_of_a", "turnover",
+        "volume_activity_20d", "return", "volume", "source", "history_source_mode",
     ]
     with destination.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -122,8 +114,7 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
         },
     }
     (output_dir / "render_bundle_manifest.json").write_text(
-        json.dumps(render_manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(render_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(
         f"render bundle ready date={target_date} innovation_mode={mode} "
