@@ -2,8 +2,6 @@ name: Refresh Shenwan Crowding Cache
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "10 9 * * 1-5"
 
 concurrency:
   group: refresh-sw-crowding
