@@ -12,14 +12,13 @@ on:
         required: false
         type: boolean
         default: false
-  schedule:
-    - cron: "0 8 * * 1-5"
   pull_request:
     paths:
       - run_daily.py
       - prepare_render_bundle.py
       - excel_renderer_artifact.py
       - run_excel_renderer.py
+      - run_excel_renderer_v12.py
       - market_monitor/**
       - tests/**
       - config/market_monitor.json
@@ -67,7 +66,7 @@ jobs:
 
       - name: Syntax and unit tests
         run: |
-          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py
+          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py run_excel_renderer_v12.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
 
