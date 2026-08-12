@@ -1,5 +1,5 @@
 {
-  "renderer_version": "1.0",
+  "renderer_version": "1.2",
   "template": {
     "file_library_name": "A股每日市场监控_优化版_20260810.xlsx",
     "sha256": "8d02be03f928cacf082cbdaa4e56dbd0ef98969fa1f53f99b174a154d9a58869",
@@ -68,6 +68,26 @@
       "must_record_payload_validation_status": true,
       "must_record_missing_modules": true
     }
+  },
+  "chart_contract": {
+    "time_axis": "bottom",
+    "gridlines": "off",
+    "primary_axis": "left",
+    "secondary_axis": "right",
+    "dashboard_market_structure": {
+      "advance": "positive_pale_peach_bar",
+      "decline": "negative_pale_green_bar",
+      "limit_up": "positive_red_line",
+      "limit_down": "negative_green_line",
+      "symmetric_zero_axes": true
+    },
+    "titles_and_legends": "external_rows_above_plot",
+    "axis_lines": "visible"
+  },
+  "dashboard_contract": {
+    "table_font_size_delta": 2,
+    "horizontal_alignment": "center",
+    "vertical_alignment": "center"
   },
   "missing_data_policy": {
     "never_replace_missing_with_zero": true,
