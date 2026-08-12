@@ -72,9 +72,11 @@ jobs:
           python -m unittest discover -s tests -v
 
       - name: Refresh Shenwan cache once
+        if: github.event_name != 'pull_request'
         run: python refresh_sw_crowding.py
 
       - name: Produce normalized payload
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           extra=""
@@ -84,9 +86,11 @@ jobs:
           python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
 
       - name: Prepare Excel renderer bundle
+        if: github.event_name != 'pull_request'
         run: python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
 
       - name: Upload production artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: a-share-monitor-${{ steps.date.outputs.value }}
