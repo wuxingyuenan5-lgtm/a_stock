@@ -1,5 +1,5 @@
-2026-08-10 11:52:50,462 INFO 获取A股代码清单
-Traceback (most recent call last):
+2026-08-12 02:09:39,873 INFO 获取A股代码清单
+  0%|          | 0/58 [00:00<?, ?it/s]  2%|▏         | 1/58 [00:05<05:21,  5.65s/it]  3%|▎         | 2/58 [00:08<03:29,  3.73s/it]  5%|▌         | 3/58 [00:11<03:07,  3.41s/it]  7%|▋         | 4/58 [00:15<03:16,  3.64s/it]  9%|▊         | 5/58 [00:17<02:46,  3.15s/it] 10%|█         | 6/58 [00:19<02:25,  2.80s/it]                                              Traceback (most recent call last):
   File "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/urllib3/connectionpool.py", line 788, in urlopen
     response = self._make_request(
                ^^^^^^^^^^^^^^^^^^^
@@ -71,7 +71,7 @@ Traceback (most recent call last):
   File "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/akshare/stock_feature/stock_hist_em.py", line 36, in stock_zh_a_spot_em
     temp_df = fetch_paginated_data(url, params)
               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/akshare/utils/func.py", line 34, in fetch_paginated_data
+  File "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/akshare/utils/func.py", line 50, in fetch_paginated_data
     r = request_with_retry(url, params=params, timeout=timeout)
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/akshare/utils/request.py", line 64, in request_with_retry
