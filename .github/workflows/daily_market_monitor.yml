@@ -8,7 +8,7 @@ on:
         required: false
         default: ""
       refresh_mapping:
-        description: "Force refresh Shenwan stock mapping (normally leave false; weekly job handles it)"
+        description: "Force refresh Shenwan stock mapping"
         required: false
         type: boolean
         default: false
@@ -20,6 +20,7 @@ on:
       - run_excel_renderer.py
       - run_excel_renderer_v12.py
       - run_excel_renderer_v12_safe.py
+      - run_excel_renderer_v13.py
       - market_monitor/**
       - tests/**
       - config/market_monitor.json
@@ -44,51 +45,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Resolve date
         id: date
         shell: bash
         run: |
-          if [ -n "${{ inputs.target_date }}" ]; then
-            target="${{ inputs.target_date }}"
-          else
-            target="$(date +%F)"
-          fi
+          if [ -n "${{ inputs.target_date }}" ]; then target="${{ inputs.target_date }}"; else target="$(date +%F)"; fi
           echo "value=$target" >> "$GITHUB_OUTPUT"
-
       - name: Syntax and unit tests
         run: |
-          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py run_excel_renderer_v12.py run_excel_renderer_v12_safe.py
+          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py run_excel_renderer_v12.py run_excel_renderer_v12_safe.py run_excel_renderer_v13.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
-
       - name: Refresh Shenwan cache once
         if: github.event_name != 'pull_request'
         run: python refresh_sw_crowding.py
-
       - name: Produce normalized payload
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
           extra=""
-          if [ "${{ inputs.refresh_mapping }}" = "true" ]; then
-            extra="--refresh-mapping"
-          fi
+          if [ "${{ inputs.refresh_mapping }}" = "true" ]; then extra="--refresh-mapping"; fi
           python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
-
       - name: Prepare Excel renderer bundle
         if: github.event_name != 'pull_request'
         run: python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
-
       - name: Upload production artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -97,7 +84,6 @@ jobs:
           path: output/${{ steps.date.outputs.value }}/
           if-no-files-found: error
           retention-days: 30
-
       - name: Persist incremental histories and JSON archive
         if: github.event_name != 'pull_request'
         shell: bash
