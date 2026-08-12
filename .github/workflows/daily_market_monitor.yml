@@ -19,6 +19,7 @@ on:
       - excel_renderer_artifact.py
       - run_excel_renderer.py
       - run_excel_renderer_v12.py
+      - run_excel_renderer_v12_safe.py
       - market_monitor/**
       - tests/**
       - config/market_monitor.json
@@ -66,7 +67,7 @@ jobs:
 
       - name: Syntax and unit tests
         run: |
-          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py run_excel_renderer_v12.py
+          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py run_excel_renderer_v12.py run_excel_renderer_v12_safe.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
 
