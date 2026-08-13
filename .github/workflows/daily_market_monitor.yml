@@ -64,6 +64,7 @@ jobs:
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
       - name: Refresh Shenwan cache once
+        continue-on-error: true
         run: python refresh_sw_crowding.py
       - name: Produce normalized payload
         shell: bash
