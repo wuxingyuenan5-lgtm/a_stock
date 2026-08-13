@@ -1,176 +1,161 @@
-# A股每日监控 Excel Renderer v1.1
+# A股每日市场监控｜Web 生产链路 v1.4
 
-## 定位
+## 目标
 
-Excel Renderer 是每日生产链路的最后一层：
+正式生产链：
 
 ```text
-GitHub data pipeline
-  -> output/YYYY-MM-DD render bundle
-  -> ChatGPT artifact runtime
-  -> frozen workbook template
-  -> workbook validation
-  -> A股每日市场监控_YYYYMMDD.xlsx
+上一交易日正式验证工作簿
++ 当日 GitHub 自包含 render bundle
+→ 原表增量更新
+→ 原图表只更新数据序列
+→ workbook validator
+→ A股每日市场监控_YYYYMMDD.xlsx
+→ 该正式输出成为下一交易日滚动母表
 ```
 
-Renderer **不访问行情 API，不重新研究，不重新定义业务口径**。所有当天数据与来源状态只来自 GitHub 生产 bundle。
+GitHub 是数据、规则、版本和 render bundle 的唯一生产源；网页 ChatGPT 只负责使用 `artifact_tool` 消费固定输入并生成 Excel，不重新研究、不重新定义字段、不自由重建工作簿。
 
-## 为什么 Renderer 不放在 GitHub Actions 里直接改 Excel
+## v1.4 核心修复
 
-冻结母表必须保留已有 Excel 图表、格式、公式和工作表结构。本项目规定正式工作簿编辑使用 ChatGPT artifact runtime 的 `artifact_tool`，因此 GitHub 负责数据、规则、版本与归档；ChatGPT 负责消费这些固定输入并渲染 Excel。
+1. **母表从固定模板改为滚动母表。** 固定 2026-08-10 模板只用于首次 bootstrap。正常生产必须以上一交易日正式验证输出为母表。滚动母表不再因为 SHA256 与 bootstrap 不同而被拒绝；改为校验 9 个工作表和固定图表结构。
+2. **禁止每日重新创建图表。** 每日 Renderer 不允许 `delete_all_drawings()`，也不允许新增图表对象。只更新原图表 series 的 categories / values。导出前后比较图表数量、锚点位置和 series identity，结构变化直接 FAIL。
+3. **01 和 06 纳入正式 Renderer。** `01_申万行业` 由 `sw_industry_latest.csv` 更新；`06_综合拥挤度_辅助` 使用同一份申万快照和 02 同日全 A 成交额分母增量更新。
+4. **04 行业矩阵不再丢行业。** 最多展示 13 个命名行业，其余归入“其他行业汇总”。当日矩阵合计必须等于当日百亿成交股数量。
+5. **05 同日推导成交额。** 申万官方给出成交额占比/换手率但 `amount_100m` 为空时，使用 02 同日全部 A 股成交额推导，不跨日期、不跨来源。
+6. **07 继续单一历史源。** `innovation_history_selected.csv` 是唯一渲染历史输入，源切换必须整段历史重写。
 
-这避免了两类问题：
+## GitHub 每日生产链
 
-1. GitHub workflow 为了生成 Excel 再引入第二套工作簿编辑库，导致版式和公式行为与聊天内交付不一致。
-2. 每日聊天重新理解整张表、临时写逻辑，造成同一张日报每天生成方式不同。
+`daily_market_monitor.yml` 人工触发后执行：
 
-## 冻结母表
+1. 语法检查和单元测试；
+2. 刷新申万四行业拥挤度缓存；
+3. 刷新申万一级/二级行业快照；
+4. 生成标准化 `daily_payload.json`；
+5. 生成自包含 render bundle；
+6. 写入 `data/latest_bundle_pointer.json`；
+7. 上传单一 workflow artifact；
+8. 持久化历史、缓存、申万快照及 JSON 归档。
 
-正式模板：
+`data/latest_bundle_pointer.json` 是网页生产的唯一 GitHub 导航入口。网页不再搜索大量仓库文件，只需读取 pointer，即可知道目标日期、workflow run id、artifact 名称、Renderer 版本和预期母表文件名。
 
-`A股每日市场监控_优化版_20260810.xlsx`
+## 自包含 render bundle
 
-SHA256：
-
-`8d02be03f928cacf082cbdaa4e56dbd0ef98969fa1f53f99b174a154d9a58869`
-
-Renderer 启动前必须校验模板哈希和 9 个工作表名称。模板不匹配时停止，不得自由重建一张新 Excel。
-
-模板当前可从用户 File Library 读取；GitHub 只记录模板名称、哈希和布局契约，不保存另一份人工改写的 Excel。
-
-## 输入 bundle
-
-每日主 workflow 在 `output/YYYY-MM-DD/` 生成：
+workflow artifact 必须包含：
 
 - `daily_payload.json`
 - `validation.json`
 - `source_manifest.json`
 - `hot_stocks.csv`
 - `innovation_history_selected.csv`
+- `sw_industry_latest.csv`
 - `render_bundle_manifest.json`
+- `web_production_manifest.json`
+- `renderer_runtime/run_excel_renderer_v14.py`
+- `renderer_runtime/excel_renderer_artifact.py`
+- `renderer_runtime/excel_renderer.json`
 
-其中 `innovation_history_selected.csv` 是渲染层唯一允许使用的创新药历史序列。东方财富与同花顺历史缓存在数据层分开维护；Renderer 不允许把两套历史拼接成一条时间序列。
+因此网页端只下载 **一个 artifact**，不再逐个读取 GitHub 程序和配置。
 
-## 图表视觉契约（Renderer v1.1）
+## 网页端标准执行
 
-本节为固定生产规则，不允许每日聊天自行改色或重新决定轴线位置。
+用户只需说：
 
-- 时间横轴统一位于图表底部，标签使用 `low` 位置；不得因为数据跨过 0 而把日期轴放到图中央。
-- 所有主要/次要网格线关闭，不显示横向或纵向虚线背景。
-- 双轴图：主指标纵轴固定左侧，第二指标纵轴固定右侧；右轴通过独立透明 overlay chart 实现。
-- 缺失数据保持 gap，不以 0 补点。
-- 首页新增固定“市场涨跌结构”组合图：
-  - 上涨家数：正柱，浅暖桃色 `#F8DDCD`；
-  - 下跌家数：负柱，浅绿色 `#DDEED7`；
-  - 涨停家数：正折线，高饱和红色 `#F00000`；
-  - 跌停家数：负折线，高饱和绿色 `#00A651`；
-  - 柱子作为背景层，折线作为前景层，四组数据共享零轴；
-  - 上涨/下跌使用左轴，涨停/跌停使用右轴，避免量级差导致折线不可读。
-- 其他双轴图保持低饱和面积/柱 + 较强折线的视觉层级。
+> 生成今天的 A 股每日市场监控
 
-## 工作表写入规则
+网页端严格执行：
+
+1. 读取 `data/latest_bundle_pointer.json`；
+2. 下载 pointer 指向的单一 artifact；
+3. 根据 `expected_mother_filename` 定位上一交易日正式工作簿；
+4. 若母表原始 xlsx 已在当前运行时，直接使用；若只能看到 File Library 引用、无法获得原始二进制，只允许用户选择/附加该文件一次，**不得自由重建**；
+5. 执行 artifact 自带 Renderer：
+
+```bash
+python renderer_runtime/run_excel_renderer_v14.py \
+  --template <mother.xlsx> \
+  --bundle-dir . \
+  --config renderer_runtime/excel_renderer.json \
+  --output A股每日市场监控_YYYYMMDD.xlsx
+```
+
+6. Renderer validator PASS/WARN 后交付；FAIL 时停止，不得退回手写 Excel。
+
+## 工作表规则
+
+### 01_申万行业
+- Header 第 6 行，数据第 7 行；
+- 输入 bundle 中 `sw_industry_latest.csv`；
+- 全量刷新当前快照；
+- 单个长期停更指数保留接口最近有效值，不跨源替换。
 
 ### 02_统一历史数据
-
-- 唯一市场历史底表。
-- 最新日期固定在第 6 行。
-- 同日重复运行：upsert，不新增重复日期。
-- 新交易日：原历史整体向下移动一行，写入第 6 行。
-- A:O 和 T 来自 payload / 已有权威历史；P:S 始终由公式生成。
-- payload 某个指数为空时：
-  - 同日重跑且母表已有已验证值：保留原值，避免一次接口失败把权威值擦掉；
-  - 新日期：保持空白并写入数据状态。
+- 新日期插入第 6 行；
+- A:O、T 来自 payload / 原有历史；P:S 为固定公式；
+- 新日期指数抓取失败保持空白；
+- 同日重跑时 payload 空值不得覆盖母表已验证非空值。
 
 ### 03_市场宽度图
-
-- 不重新抓数据。
-- 读取 02 全历史，按日期升序刷新三张原生图：
-  - 上涨与下跌家数
-  - 涨停与跌停家数
-  - 市场宽度
-- 图表序列直接来自 02，不再维护第二套业务历史。
-- 时间轴固定在底部、无网格线。
+- 只读 02；
+- 图表时间升序；
+- 三张既有图表只更新 series；
+- 不删除、不新建图表。
 
 ### 04_百亿成交历史
-
-- 明细按日期倒序、同日排名升序。
-- 同日重跑替换当日明细，不重复追加。
-- 行业矩阵显示最近 6 个有百亿成交记录的交易日。
-- `累计次数` 从完整长表重新汇总。
-- 若最近 6 日申万二级行业数超过 14 个，显示前 13 个行业并将剩余行业汇总为“其他行业汇总”，保证矩阵合计不丢失。
-- 当日矩阵合计、长表当日行数和 02 的百亿成交股数必须一致。
+- 长表最新日期在上，同日排名升序；
+- 最近 6 个有记录交易日进入矩阵；
+- 13 个命名行业 + 1 个“其他行业汇总”；
+- 矩阵当日合计 = 长表当日行数 = 02 百亿成交股数。
 
 ### 05_申万行业资金拥挤度
+- 四个目标行业必须完整同日；
+- 官方值未发布时不新增空白日期；
+- 成交额缺失但同日占比存在时，用 02 同日全 A 分母推导；
+- 四张既有图表只更新 series。
 
-- 只接受申万模块的 4 个目标行业完整 payload。
-- 当天申万官方值未发布时，不新增空白日期，不使用其他行业分类补齐。
-- 保留最近有效官方日。
-- 两张图固定为左/右双轴：通信设备“成交占比 + 换手率”、四行业“成交额 + 成交额占比”。
+### 06_综合拥挤度_辅助
+- 使用 01 同源的四个目标二级行业；
+- 只在四个目标均为同一有效日且 02 有同日全 A 成交额时新增；
+- 仍为辅助模块，不进入核心评分。
 
 ### 07_创新药交易拥挤度
-
-- 独立主题，不并入 05。
-- 首选东方财富 BK1106 历史：成交额、成交占比、换手率、收益均来自同一历史源。
-- 若东方财富历史不可用，则使用同花顺独立备用历史，换手率为空。
-- **源切换时必须使用完整 `innovation_history_selected.csv` 重写 07 历史区，禁止只覆盖最新一行造成跨源混合。**
-- 主图优先展示：创新药成交额占全 A + 创新药换手率。
-- 仅当完整历史无换手率时，第二条线才退回 `20日成交量活跃度代理`，并明确标注“非官方换手率”。
-- 双轴、底部时间轴、无网格线属于固定版式。
-
-### 00_市场总览
-
-- 绝大多数 KPI 继续引用 02 / 05 / 07，不复制业务计算。
-- 百亿成交表展示当天前若干只股票。
-- 图表全部使用与 03 / 05 / 07 同源的历史序列。
-- 固定图表栈：
-  1. 市场涨跌结构组合图（上涨/下跌柱 + 涨停/跌停线）；
-  2. 市场宽度；
-  3. 通信设备成交占比 + 换手率；
-  4. 四行业成交额 + 成交额占比；
-  5. 创新药成交占比 + 换手率/备用活跃度代理。
+- 独立主题；
+- 完整 selected history 重写；
+- 不混用东方财富与同花顺；
+- 两张既有图表只更新 series。
 
 ### 99_口径与质量
+必须记录目标日期、payload validation、Renderer v1.4、输入滚动母表 SHA256、各模块最新有效日、缺失模块和图表结构校验结果。
 
-必须记录：
+## 硬校验
 
-- 目标交易日
-- payload validation 状态
-- renderer 版本
-- 各模块最新有效日期
-- 缺失 / WARN 模块
-- 创新药实际历史源与是否存在真实换手率
-- 模板哈希校验结果
+正式导出前必须满足：
 
-## Validator
+1. 02 第 6 行为目标交易日；
+2. 市场宽度公式正确；
+3. 百亿成交集中度正确；
+4. 04 当日长表行数与 02 一致；
+5. 04 当日矩阵合计与 02 一致；
+6. 00 核心 KPI 与 02 一致；
+7. 03 最新日期为目标日；
+8. 东方财富创新药当日换手率不为空；
+9. 导出前后 00/03/05/07 的图表数量、锚点和 series identity 完全一致；
+10. 全工作簿无 `#REF!/#DIV0!/#VALUE!/#NAME?/#N/A`。
 
-导出前至少执行：
+任何硬校验失败：**停止交付，不自由重建。**
 
-1. 02 第 6 行日期 = 目标日。
-2. 02 市场宽度公式与上涨/下跌家数一致。
-3. 02 百亿成交集中度 = 百亿成交额 / 全 A 成交额。
-4. 04 当日长表行数 = 02 百亿成交股数。
-5. 04 当日矩阵合计 = 02 百亿成交股数。
-6. 00 最新 KPI 与 02 第 6 行一致。
-7. 03 市场宽度图最后日期 = 目标日。
-8. 若 07 使用东方财富历史，则最新有效行换手率不得为空。
-9. 全工作簿扫描 `#REF!/#DIV0!/#VALUE!/#NAME?/#N/A`。
+## 效率目标
 
-任一硬校验失败，不交付 Excel；不得退回“自由手写一份新表”。
+网页日常运行收敛为：
 
-## 日常执行方式
+```text
+1 次读取 latest pointer
++ 1 次下载 artifact
++ 1 次获得母表
++ 1 次 Renderer
++ 1 次 validator
+= 直接交付
+```
 
-用户以后只需要说：
-
-> 更新今天的 A 股监控表
-
-生产聊天应执行：
-
-1. 读取 GitHub `config/excel_renderer.json`。
-2. 读取当天 GitHub render bundle。
-3. 从 File Library 读取冻结母表并核验 SHA256。
-4. 使用 artifact_tool 增量写入。
-5. 按 Renderer v1.1 视觉契约刷新原生 Excel 图表。
-6. 运行 workbook validator。
-7. 导出并发送 `A股每日市场监控_YYYYMMDD.xlsx`。
-
-GitHub 是数据与规则的唯一版本源；Excel 只是固定 Renderer 的交付物。
+不再重复搜索多个 GitHub 文件、临时推断版式、重新创建图表、手工重算生产包已有数据，或在错误母表上连续修补。
