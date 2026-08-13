@@ -73,7 +73,9 @@ jobs:
           if [ "${{ inputs.refresh_mapping }}" = "true" ]; then extra="--refresh-mapping"; fi
           python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
       - name: Prepare Excel renderer bundle
-        run: python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
+        run: |
+          python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
+          cp data/history/market_core.csv "output/${{ steps.date.outputs.value }}/market_core.csv"
       - name: Upload production artifact
         uses: actions/upload-artifact@v4
         with:
