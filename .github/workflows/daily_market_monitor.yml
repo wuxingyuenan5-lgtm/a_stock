@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      full_refresh_sw_industry:
+        description: "Run slow per-index Shenwan history refresh instead of fast bulk incremental refresh"
+        required: false
+        type: boolean
+        default: false
   pull_request:
     paths:
       - run_daily.py
@@ -21,9 +26,11 @@ on:
       - run_excel_renderer_v14.py
       - market_monitor/**
       - update_sw_industry.py
+      - update_sw_industry_fast.py
       - tests/**
       - config/market_monitor.json
       - config/excel_renderer.json
+      - config/web_production_runtime.json
       - requirements.txt
       - .github/workflows/daily_market_monitor.yml
 
@@ -65,25 +72,22 @@ jobs:
           fi
           echo "value=$target" >> "$GITHUB_OUTPUT"
 
-      - name: Syntax and unit tests
+      - name: Fast syntax preflight
         run: |
           python -m py_compile \
             run_daily.py prepare_render_bundle.py excel_renderer_artifact.py \
             run_excel_renderer.py run_excel_renderer_v14.py \
-            refresh_sw_crowding.py refresh_sw_mapping.py update_sw_industry.py
+            refresh_sw_crowding.py refresh_sw_mapping.py \
+            update_sw_industry.py update_sw_industry_fast.py
           python -m py_compile market_monitor/*.py
-          python -m unittest discover -s tests -v
+
+      - name: Full unit tests on code review only
+        if: github.event_name == 'pull_request'
+        run: python -m unittest discover -s tests -v
 
       - name: Refresh Shenwan crowding cache once
         if: github.event_name != 'pull_request'
         run: python refresh_sw_crowding.py
-
-      - name: Refresh Shenwan industry snapshot once
-        if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          python update_sw_industry.py --history-rows 260 --workers 4 --sleep-seconds 0.15 \
-            || echo "::warning::Shenwan industry refresh failed; renderer will use the last validated cached snapshot."
 
       - name: Produce normalized payload
         if: github.event_name != 'pull_request'
@@ -94,6 +98,24 @@ jobs:
             extra="--refresh-mapping"
           fi
           python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
+
+      - name: Refresh Shenwan industry snapshot
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          target="${{ steps.date.outputs.value }}"
+          today="$(date +%F)"
+          if [ "${{ inputs.full_refresh_sw_industry }}" = "true" ]; then
+            echo "Running full Shenwan history refresh"
+            python update_sw_industry.py --history-rows 260 --workers 4 --sleep-seconds 0.15 \
+              || echo "::warning::Full Shenwan refresh failed; renderer will use the last validated cached snapshot."
+          elif [ "$target" = "$today" ]; then
+            echo "Running fast bulk Shenwan incremental refresh"
+            python update_sw_industry_fast.py --target-date "$target" \
+              || echo "::warning::Fast Shenwan refresh failed; renderer will use the last validated cached snapshot."
+          else
+            echo "::notice::Historical target date; skip realtime Shenwan refresh and use validated cache."
+          fi
 
       - name: Prepare self-contained web renderer bundle
         if: github.event_name != 'pull_request'
@@ -116,6 +138,7 @@ jobs:
               "renderer_version": manifest["renderer_version"],
               "expected_mother_date": manifest["mother_policy"]["expected_mother_date"],
               "expected_mother_filename": manifest["mother_policy"]["expected_mother_filename"],
+              "runtime_manifest": "config/web_production_runtime.json",
               "workflow": "daily_market_monitor.yml",
           }
           Path("data/latest_bundle_pointer.json").write_text(
