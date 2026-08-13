@@ -1,119 +1,242 @@
-# A股每日监控生产链路 v1
+# A股每日市场监控｜生产链路 v2.0
 
-## 目标
+## 1. 目标
 
-把每日更新从“临时抓数据 + 手工改 Excel”变成固定的数据生产接口。
-
-正式链路：
+日常生产必须是可重复、可停止、不可自由发挥的固定流水线：
 
 ```text
-Data Collector
-  -> Normalizer
-  -> daily_payload.json
-  -> Validator
-  -> Excel Renderer
+GitHub 数据生产
+→ 标准化 payload + validation
+→ 自包含 render bundle
+→ latest bundle pointer
+→ 网页 ChatGPT 读取唯一 runtime manifest
+→ 上一交易日已验证滚动母表
+→ Renderer v1.4 原表增量更新
+→ workbook validator
+→ 今日 XLSX
+→ 今日 XLSX 成为下一交易日母表
 ```
 
-v1 已实现前四步。Excel Renderer 将以冻结母表为模板消费 `daily_payload.json`，不再负责研究或重新定义口径。
+GitHub 负责数据、规则、版本和 bundle；网页端只负责执行固定 Renderer 和交付 Excel。
 
-## 一键运行
+---
 
-```bash
-python run_daily.py --target-date 2026-08-10
-```
+## 2. 唯一入口
 
-日更入口只允许生产中国时区“当天”收盘快照；历史回填继续走专用 backfill 流程，避免把当前行情误标成历史日期。
+网页端每天首先只读取：
 
-输出：
+`config/web_production_runtime.json`
+
+随后只读取：
+
+`data/latest_bundle_pointer.json`
+
+正常日禁止仓库全局搜索、禁止重新理解版式、禁止人工重算 bundle 已有业务数据。
+
+---
+
+## 3. GitHub 每日关键路径
+
+`.github/workflows/daily_market_monitor.yml` 手工触发。
+
+正常生产路径：
+
+1. 安装依赖；
+2. 快速语法预检；
+3. 刷新 05 所需申万四行业拥挤度缓存；
+4. `run_daily.py` 生成当天标准化市场 payload；
+5. 使用 `update_sw_industry_fast.py` 两次批量申万实时接口增量更新 01/06 所需行业快照；
+6. `prepare_render_bundle.py` 生成自包含 bundle；
+7. 写 `data/latest_bundle_pointer.json`；
+8. 上传一个 `a-share-monitor-YYYY-MM-DD` artifact；
+9. 持久化增量历史、缓存和 JSON 状态。
+
+完整单元测试只在 PR/code review 跑，不再占用正常日生产时间。
+
+### 申万行业刷新分层
+
+- **日常快速模式**：`update_sw_industry_fast.py`
+  - 只做一级行业 + 二级行业两次批量请求；
+  - 在已有 `sw_industry_history.csv` 上 upsert 当天；
+  - 重算 20 日波动率；
+  - 保留 260 日滚动历史；
+  - 覆盖率低于 90% 时失败并沿用上一次已验证缓存。
+- **完整刷新模式**：`update_sw_industry.py`
+  - 仅 bootstrap、接口结构变化、缓存损坏或人工选择 `full_refresh_sw_industry=true` 时执行；
+  - 不再进入普通日关键路径。
+
+历史目标日不得使用实时批量接口伪装历史值；非当天目标日直接沿用已验证缓存。
+
+---
+
+## 4. 标准化数据层
+
+`run_daily.py` 是业务数据生产入口，生成：
+
+- `daily_payload.json`
+- `validation.json`
+- `source_manifest.json`
+- `hot_stocks.csv`
+- `all_a_snapshot.csv`
+- `sw_analysis_daily_second.csv`
+
+并维护：
+
+- `data/history/market_core.csv`
+- 创新药主/备独立历史
+- 申万个股二级行业映射缓存
+
+原则：
+
+- 同一字段优先一个稳定接口一次获取；
+- 缺失不写 0；
+- 不跨源补值；
+- 新交易日接口失败则该字段留空并 WARN；
+- 同日重跑不得用空值覆盖母表中已验证非空值。
+
+---
+
+## 5. Render bundle
+
+`prepare_render_bundle.py` 将网页端需要的输入封装为一个 artifact。
+
+至少包含：
+
+- `daily_payload.json`
+- `validation.json`
+- `source_manifest.json`
+- `hot_stocks.csv`
+- `innovation_history_selected.csv`
+- `sw_industry_latest.csv`
+- `render_bundle_manifest.json`
+- `web_production_manifest.json`
+- `renderer_runtime/run_excel_renderer_v14.py`
+- `renderer_runtime/excel_renderer_artifact.py`
+- `renderer_runtime/excel_renderer.json`
+
+网页端不再逐个拉取 GitHub 程序和配置。
+
+`data/latest_bundle_pointer.json` 记录：
+
+- 目标日期；
+- workflow run id；
+- artifact 名称；
+- Renderer 版本；
+- 预期上一交易日母表日期与文件名；
+- runtime manifest 路径。
+
+---
+
+## 6. 滚动母表
+
+正常生产只接受：
+
+`上一交易日正式验证输出.xlsx`
+
+作为今日母表。
+
+固定 `A股每日市场监控_优化版_20260810.xlsx` 只用于首次 bootstrap。
+
+如果预期母表存在但网页运行时无法取得原始 xlsx 二进制：
+
+**立即停止并要求用户附加/选择该文件。**
+
+禁止：
+
+- 用更旧母表替代；
+- 根据解析文本重建；
+- 新建工作簿模仿版式；
+- 重新创建图表。
+
+成功输出自动成为下一交易日母表。
+
+---
+
+## 7. Renderer v1.4
+
+入口：
+
+`run_excel_renderer.py -> run_excel_renderer_v14.py`
+
+职责：
+
+- 01：更新申万一级/二级快照；
+- 02：目标日 upsert；
+- 03：从 02 刷新原图表 series；
+- 04：新增百亿成交明细并重算最近 6 日矩阵；
+- 05：更新四行业官方拥挤度；
+- 06：在同日四行业 + 同日全 A 分母齐全时增量更新；
+- 07：使用完整单一来源 selected history；
+- 00：同步 KPI/摘要与已有图表 series；
+- 99：记录数据质量、母表 SHA、Renderer 版本和缺失模块。
+
+### 图表铁律
+
+每日生产只允许修改已有图表的：
+
+- categories
+- values
+- 必要的标题文字
+
+禁止：
+
+- `delete_all_drawings()`
+- 新增 chart object
+- 移动 anchor
+- 改变 series identity
+
+00 / 03 / 05 / 07 导出前后图表数量、锚点、series identity 必须完全一致。
+
+---
+
+## 8. Validator
+
+硬校验至少包括：
+
+1. 02 第 6 行 = 目标日期；
+2. 市场宽度公式正确；
+3. 百亿成交集中度正确；
+4. 04 当日长表行数 = 02 百亿股数；
+5. 04 当日矩阵合计 = 02 百亿股数；
+6. 00 核心 KPI = 02；
+7. 03 最新日期 = 目标日；
+8. 东方财富创新药当日有真实换手率；
+9. 图表结构完全保持；
+10. 全工作簿无 `#REF!/#DIV0!/#VALUE!/#NAME?/#N/A`。
+
+FAIL：不交付。
+WARN：允许交付，但 99 页必须写明缺失项。
+
+---
+
+## 9. 历史数据缺口与日常生产隔离
+
+历史百亿成交等存量缺口属于一次性 backfill/data-debt 项目，不允许每天重新回补，也不能拖慢每日生产。
+
+日常链路只做：
+
+`昨日已验证状态 + 今日增量`
+
+历史回填单独运行、单独验证、验证通过后再并入母表。
+
+---
+
+## 10. 网页端明日标准动作
+
+用户只需：
+
+> 生成今天的A股每日市场监控
+
+网页端执行：
 
 ```text
-output/2026-08-10/
-  daily_payload.json
-  validation.json
-  source_manifest.json
-  hot_stocks.csv
-  all_a_snapshot.csv
-  sw_analysis_daily_second.csv
+读 web_production_runtime.json
+→ 读 latest_bundle_pointer.json
+→ 下载一个 artifact
+→ 找 expected_mother_filename
+→ 运行一次 Renderer
+→ 运行一次 validator
+→ 交付
 ```
 
-`source_manifest.json` 同时记录每个模块的实际数据源和耗时，方便定位慢接口。
-
-## 每日增量原则
-
-- 全 A 市场历史只追加当天一行：`data/history/market_core.csv`
-- 创新药历史只请求上次有效日附近到目标日，之后去重追加
-- 申万个股行业映射从每日链路拆出，由每周任务刷新到 `data/cache/sw_stock_mapping.csv`
-- 正常日不重新跑 1 月至今的全市场历史
-- 单个指数、申万或创新药上游失败时降级为 WARN，不让已成功的核心市场数据重跑
-
-## 性能策略
-
-- 全 A 快照在 GitHub Runner 上固定使用已验证稳定的新浪 A 股快照，避免无硬超时的东财 AKShare 调用阻塞每日链路
-- 上证50、Choice微盘、中证全指三个直连 K 线请求并发执行，每个 HTTP 请求设置连接/读取硬超时
-- 申万个股映射每周刷新，不进入每日关键路径
-- 创新药东方财富 BK1106 使用带硬超时的直连 K 线，只增量更新最近一小段日期；失败立即切同花顺备用
-- 东方财富创新药历史与同花顺备用历史使用不同缓存文件，禁止混写
-- 大体量原始快照不长期提交 Git，只保留 Action artifact
-
-## payload 契约
-
-`daily_payload.json` 是所有展示端的唯一输入，主要包含：
-
-- `market`: 上涨/下跌/平盘、涨跌停、全 A 成交额、市场宽度
-- `indices`: 上证50、Choice微盘、中证全指
-- `hot_stocks`: 成交额 >= 100 亿元个股及申万行业映射
-- `sw_crowding`: 通信设备、计算机设备、元件、半导体
-- `innovation_drug`: 独立创新药主题
-- `rendering`: 表格倒序、图表正序
-
-## 申万拥挤度
-
-申万日度分析接口直接提供换手率和成交额占比，二者都按百分数点返回，生产层统一转换成 0-1 小数。
-
-若申万最新有效日落后于市场目标日：
-
-- 保留申万最新有效日期
-- 成交额占比使用申万官方字段
-- 不用目标日全 A 成交额反推滞后日行业成交额
-- 缺少同日分母时，行业成交额保持空值，而不是伪造 0
-
-## 创新药
-
-创新药不并入申万 05，独立作为主题页。
-
-生产层采用“东方财富主源 + 同花顺备用源”，且历史缓存完全分开：
-
-1. 东方财富创新药概念板块 BK1106
-   - 直接请求标准日 K 线字段
-   - 可取得成交量、成交额、涨跌幅、换手率
-   - 换手率直接使用供应商字段，不再自行倒算流通股本
-2. 同花顺创新药主题
-   - 当东方财富在 GitHub Runner 上不可访问时补成交额、收益和历史活跃度
-   - 若备用源没有可靠板块总换手率，则该字段保持空值并在 validation 中告警
-
-成交额统一转换为亿元；成交额占全 A 只使用同日 `market_core.csv` 分母。
-
-## GitHub Actions
-
-`.github/workflows/daily_market_monitor.yml`
-
-- 工作日北京时间 16:40 自动执行
-- 支持手工运行当天任务
-- PR 会跑单元测试和一次真实数据 dry-run，但不会写回历史数据
-- 只持久化增量 history/cache 和 JSON 归档
-- 大体量股票快照只放 Action artifact，避免仓库膨胀
-
-`.github/workflows/refresh_sw_mapping.yml`
-
-- 每周一北京时间 08:00 刷新申万个股到二级行业映射
-- 把慢速行业成分请求从每日生产链路移除
-
-## 下一阶段：Excel Renderer
-
-冻结一份正式母表后，Renderer 只做三件事：
-
-1. 读取 `daily_payload.json`
-2. 把当天数据写入固定表位，并刷新图表数据源
-3. 运行 workbook validator 后导出 `A股每日市场监控_YYYYMMDD.xlsx`
-
-Renderer 不再访问外部行情 API，也不重新计算业务口径。
+如果母表原始文件无法取得，只问一次用户附加母表；不再进入任何自由重建路径。
