@@ -1,19 +1,12 @@
 name: Update Shenwan Industry Data
 
-# Manual refresh marker: 2026-08-12 16:01 CST
+# Manual fallback only. The daily market-monitor workflow refreshes this snapshot once
+# inside the same production run so the render bundle is self-consistent.
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - main
-    paths:
-      - update_sw_industry.py
-      - requirements.txt
-      - .github/workflows/update_sw_industry.yml
 
 concurrency:
-  group: sw-industry-update-${{ github.ref }}
+  group: sw-industry-manual-refresh
   cancel-in-progress: true
 
 jobs:
@@ -40,7 +33,7 @@ jobs:
         run: python -m py_compile update_sw_industry.py
 
       - name: Update industry data
-        run: python update_sw_industry.py --history-rows 260 --sleep-seconds 0.20
+        run: python update_sw_industry.py --history-rows 260 --workers 4 --sleep-seconds 0.15
 
       - name: Upload generated CSV files
         if: always()
@@ -51,7 +44,6 @@ jobs:
           if-no-files-found: warn
 
       - name: Commit updated CSV files
-        if: github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -61,4 +53,5 @@ jobs:
             exit 0
           fi
           git commit -m "data: update Shenwan industry tracker"
+          git pull --rebase origin main
           git push
