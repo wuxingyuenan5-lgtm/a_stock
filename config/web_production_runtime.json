@@ -1,0 +1,61 @@
+{
+  "runtime_version": "2.0",
+  "project": "A股每日市场监控",
+  "repository": "wuxingyuenan5-lgtm/a_stock",
+  "branch": "main",
+  "timezone": "Asia/Shanghai",
+  "entrypoint": {
+    "latest_pointer": "data/latest_bundle_pointer.json",
+    "renderer": "run_excel_renderer.py",
+    "renderer_version": "1.4",
+    "renderer_config": "config/excel_renderer.json"
+  },
+  "web_daily_protocol": [
+    "读取本文件，不再自行搜索或重新理解生产规则",
+    "读取 data/latest_bundle_pointer.json 并确认 target_date 与当天任务一致",
+    "仅下载 pointer 指向的一个 GitHub Actions artifact",
+    "按 expected_mother_filename 定位上一交易日已验证工作簿；优先当前聊天附件，其次 File Library",
+    "若无法取得母表原始 xlsx 二进制，立即停止并要求用户附加该文件；禁止自由重建",
+    "直接运行 artifact 内自带 renderer_runtime，一次渲染",
+    "读取 renderer_validation；FAIL 不交付，PASS/WARN 才交付"
+  ],
+  "mother_policy": {
+    "mode": "rolling_previous_validated",
+    "bootstrap_only": "A股每日市场监控_优化版_20260810.xlsx",
+    "never_rebuild_from_scratch": true,
+    "never_use_older_mother_when_expected_previous_workbook_exists": true,
+    "next_day_mother": "today_successful_output"
+  },
+  "chart_policy": {
+    "update_existing_objects_only": true,
+    "forbid_delete_all_drawings": true,
+    "forbid_new_charts": true,
+    "must_preserve_chart_counts_anchors_and_series_identities": true
+  },
+  "data_policy": {
+    "renderer_never_calls_market_api": true,
+    "all_business_data_from_render_bundle": true,
+    "missing_never_zero": true,
+    "never_cross_fill_sources": true,
+    "same_field_single_stable_interface_preferred": true
+  },
+  "efficiency_policy": {
+    "single_manifest_first": true,
+    "single_artifact_download": true,
+    "no_repo_wide_search_on_normal_daily_run": true,
+    "no_manual_business_recalculation": true,
+    "no_full_unit_test_suite_on_normal_production_dispatch": true,
+    "slow_shenwan_full_history_refresh_not_in_critical_path": true
+  },
+  "hard_stop_conditions": [
+    "pointer missing or target date mismatch",
+    "artifact missing required files",
+    "mother workbook unavailable as raw xlsx",
+    "mother workbook required sheets/chart invariants fail",
+    "payload validation FAIL",
+    "renderer validation FAIL",
+    "chart structure changed",
+    "formula error scan fails"
+  ],
+  "expected_user_command": "生成今天的A股每日市场监控"
+}
