@@ -18,10 +18,9 @@ on:
       - prepare_render_bundle.py
       - excel_renderer_artifact.py
       - run_excel_renderer.py
-      - run_excel_renderer_v12.py
-      - run_excel_renderer_v12_safe.py
-      - run_excel_renderer_v13.py
+      - run_excel_renderer_v14.py
       - market_monitor/**
+      - update_sw_industry.py
       - tests/**
       - config/market_monitor.json
       - config/excel_renderer.json
@@ -45,37 +44,86 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Resolve date
         id: date
         shell: bash
         run: |
-          if [ -n "${{ inputs.target_date }}" ]; then target="${{ inputs.target_date }}"; else target="$(date +%F)"; fi
+          if [ -n "${{ inputs.target_date }}" ]; then
+            target="${{ inputs.target_date }}"
+          else
+            target="$(date +%F)"
+          fi
           echo "value=$target" >> "$GITHUB_OUTPUT"
+
       - name: Syntax and unit tests
         run: |
-          python -m py_compile run_daily.py prepare_render_bundle.py refresh_sw_crowding.py refresh_sw_mapping.py excel_renderer_artifact.py run_excel_renderer.py run_excel_renderer_v12.py run_excel_renderer_v12_safe.py run_excel_renderer_v13.py
+          python -m py_compile \
+            run_daily.py prepare_render_bundle.py excel_renderer_artifact.py \
+            run_excel_renderer.py run_excel_renderer_v14.py \
+            refresh_sw_crowding.py refresh_sw_mapping.py update_sw_industry.py
           python -m py_compile market_monitor/*.py
           python -m unittest discover -s tests -v
-      - name: Refresh Shenwan cache once
+
+      - name: Refresh Shenwan crowding cache once
         if: github.event_name != 'pull_request'
         run: python refresh_sw_crowding.py
+
+      - name: Refresh Shenwan industry snapshot once
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          python update_sw_industry.py --history-rows 260 --workers 4 --sleep-seconds 0.15 \
+            || echo "::warning::Shenwan industry refresh failed; renderer will use the last validated cached snapshot."
+
       - name: Produce normalized payload
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
           extra=""
-          if [ "${{ inputs.refresh_mapping }}" = "true" ]; then extra="--refresh-mapping"; fi
+          if [ "${{ inputs.refresh_mapping }}" = "true" ]; then
+            extra="--refresh-mapping"
+          fi
           python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
-      - name: Prepare Excel renderer bundle
+
+      - name: Prepare self-contained web renderer bundle
         if: github.event_name != 'pull_request'
         run: python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
+
+      - name: Write latest bundle pointer
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          d = "${{ steps.date.outputs.value }}"
+          manifest = json.loads(Path(f"output/{d}/render_bundle_manifest.json").read_text(encoding="utf-8"))
+          pointer = {
+              "date": d,
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "artifact_name": f"a-share-monitor-{d}",
+              "renderer_version": manifest["renderer_version"],
+              "expected_mother_date": manifest["mother_policy"]["expected_mother_date"],
+              "expected_mother_filename": manifest["mother_policy"]["expected_mother_filename"],
+              "workflow": "daily_market_monitor.yml",
+          }
+          Path("data/latest_bundle_pointer.json").write_text(
+              json.dumps(pointer, ensure_ascii=False, indent=2), encoding="utf-8"
+          )
+          print(json.dumps(pointer, ensure_ascii=False))
+          PY
+
       - name: Upload production artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -84,13 +132,18 @@ jobs:
           path: output/${{ steps.date.outputs.value }}/
           if-no-files-found: error
           retention-days: 30
-      - name: Persist incremental histories and JSON archive
+
+      - name: Persist histories, snapshots, JSON archive, and latest pointer
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/history data/cache "output/${{ steps.date.outputs.value }}/*.json"
+          git add \
+            data/history data/cache \
+            data/sw_industry_history.csv data/sw_industry_latest.csv data/sw_industry_failures.csv \
+            data/latest_bundle_pointer.json \
+            "output/${{ steps.date.outputs.value }}/*.json"
           if git diff --cached --quiet; then
             echo "No persistent data changes"
           else
