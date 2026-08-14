@@ -1,0 +1,51 @@
+name: Web Chat A-share Production Trigger
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ops/run_request.json
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: web-a-share-production-trigger
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout request
+        uses: actions/checkout@v4
+
+      - name: Resolve requested trading date
+        id: request
+        shell: bash
+        run: |
+          target="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('ops/run_request.json')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          print(str(data.get('target_date') or '').strip())
+          PY
+          )"
+          if [ -z "$target" ]; then
+            target="$(TZ=Asia/Shanghai date +%F)"
+          fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Dispatching production for $target"
+
+      - name: Dispatch official daily production workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run daily_market_monitor.yml \
+            --ref main \
+            -f target_date="${{ steps.request.outputs.target }}" \
+            -f refresh_mapping=false \
+            -f full_refresh_sw_industry=false
