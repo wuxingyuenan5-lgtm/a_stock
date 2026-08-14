@@ -1,9 +1,10 @@
 {
   "date": "2026-08-14",
-  "filename": "A股每日市场监控_20260814.xlsx",
-  "sha256": "be6e431e12c90ac46515f514d27a292afcd3df049ad4660645f5830b0289be6e",
+  "filename": "A股每日市场监控_20260814_修正版.xlsx",
+  "sha256": "29b47339556d26470e7d8584df5370e302d0ea03daae37d35992d11acd0cb4b8",
   "validation": "PASS_WITH_DATA_WARN",
-  "source": "web_chat_verified_delivery",
+  "source": "web_chat_verified_delivery_after_20260814_review",
   "next_use": "rolling_mother",
-  "notes": "三项指数8/14主请求及同源二次重试均失败，按规则留空；创新药当前快照已到8/14，备用历史序列最新8/13且无可靠换手率。"
+  "renderer_version": "1.5-policy-compatible",
+  "notes": "修复创新药：恢复8/13及以前可靠换手率历史、停用20日成交量活跃度代理、8/11成交额占比按02同日全A分母补算、8/7因分母仍缺失留空；03/00市场图标题显式标注最新日期。8/14三项指数旧bundle仍为空，生产源已在PR #31改为多接口韧性链，待下一正式生产验证。"
 }
