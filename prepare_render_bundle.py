@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 
-RENDERER_VERSION = "1.4"
+RENDERER_VERSION = "1.5"
 
 
 def _read_json(path: Path) -> dict:
@@ -44,15 +44,6 @@ def _market_amount_map(history_path: Path) -> dict[str, float]:
     return out
 
 
-def _previous_market_date(history_path: Path, target_date: str) -> str | None:
-    dates = sorted({
-        str(row.get("date") or "").strip()
-        for row in _read_csv(history_path)
-        if str(row.get("date") or "").strip() and str(row.get("date") or "").strip() < target_date
-    })
-    return dates[-1] if dates else None
-
-
 def _normalize_history(rows: list[dict[str, str]], mode: str, market_amounts: dict[str, float]) -> list[dict[str, object]]:
     normalized: list[dict[str, object]] = []
     for row in rows:
@@ -70,7 +61,6 @@ def _normalize_history(rows: list[dict[str, str]], mode: str, market_amounts: di
             "amount_100m": amount_100m,
             "amount_share_of_a": share,
             "turnover": _float(row.get("换手率")),
-            "volume_activity_20d": _float(row.get("20日成交量活跃度代理")),
             "return": _float(row.get("日收益率")),
             "volume": _float(row.get("成交量")),
             "source": str(row.get("数据源") or "").strip(),
@@ -85,6 +75,14 @@ def _copy_required(source: Path, destination: Path) -> None:
         raise RuntimeError(f"required renderer input missing: {source}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+
+
+def _validated_mother(root: Path) -> tuple[str | None, str | None]:
+    registry_path = root / "data" / "latest_validated_workbook.json"
+    if not registry_path.exists():
+        return None, None
+    registry = _read_json(registry_path)
+    return registry.get("date"), registry.get("filename")
 
 
 def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
@@ -111,7 +109,7 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
     destination = output_dir / "innovation_history_selected.csv"
     fieldnames = [
         "date", "amount_100m", "amount_share_of_a", "turnover",
-        "volume_activity_20d", "return", "volume", "source", "history_source_mode",
+        "return", "volume", "source", "history_source_mode",
     ]
     with destination.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -121,37 +119,40 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
     # Self-contained web renderer inputs: one artifact download is enough.
     _copy_required(root / "data" / "sw_industry_latest.csv", output_dir / "sw_industry_latest.csv")
     runtime_dir = output_dir / "renderer_runtime"
+    _copy_required(root / "run_excel_renderer_v15.py", runtime_dir / "run_excel_renderer_v15.py")
     _copy_required(root / "run_excel_renderer_v14.py", runtime_dir / "run_excel_renderer_v14.py")
     _copy_required(root / "excel_renderer_artifact.py", runtime_dir / "excel_renderer_artifact.py")
     _copy_required(root / "config" / "excel_renderer.json", runtime_dir / "excel_renderer.json")
 
-    previous_date = _previous_market_date(market_history, target_date)
-    expected_mother = f"A股每日市场监控_{previous_date.replace('-', '')}.xlsx" if previous_date else None
+    mother_date, expected_mother = _validated_mother(root)
 
     render_manifest = {
         "date": target_date,
-        "renderer_bundle_version": "2.0",
+        "renderer_bundle_version": "2.1",
         "renderer_version": RENDERER_VERSION,
         "innovation_history_source_mode": mode,
         "innovation_history_rows": len(normalized),
         "innovation_history_share_rows": share_rows,
+        "innovation_activity_proxy": "retired",
         "market_core_rows": len(market_amounts),
         "mother_policy": {
             "mode": "rolling_previous_validated",
-            "expected_mother_date": previous_date,
+            "registry": "data/latest_validated_workbook.json",
+            "expected_mother_date": mother_date,
             "expected_mother_filename": expected_mother,
-            "fallback": "bootstrap template only when no prior validated workbook exists"
+            "fallback": "bootstrap template only when no validated registry exists"
         },
         "web_execution": {
-            "goal": "single artifact download + one mother workbook + one renderer command",
+            "goal": "single artifact download + one validated rolling mother + one renderer command",
             "command": (
-                f"python renderer_runtime/run_excel_renderer_v14.py "
+                f"python renderer_runtime/run_excel_renderer_v15.py "
                 f"--template <mother.xlsx> --bundle-dir . "
                 f"--config renderer_runtime/excel_renderer.json "
                 f"--output A股每日市场监控_{target_date.replace('-', '')}.xlsx"
             ),
             "forbid_free_rebuild": True,
-            "forbid_chart_recreation": True
+            "forbid_chart_recreation": True,
+            "innovation_turnover_proxy_forbidden": True
         },
         "files": {
             "payload": "daily_payload.json",
@@ -160,7 +161,8 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
             "hot_stocks": "hot_stocks.csv",
             "innovation_history": "innovation_history_selected.csv",
             "sw_industry_latest": "sw_industry_latest.csv",
-            "renderer": "renderer_runtime/run_excel_renderer_v14.py",
+            "renderer": "renderer_runtime/run_excel_renderer_v15.py",
+            "renderer_base": "renderer_runtime/run_excel_renderer_v14.py",
             "renderer_core": "renderer_runtime/excel_renderer_artifact.py",
             "renderer_config": "renderer_runtime/excel_renderer.json"
         }
@@ -172,6 +174,7 @@ def build_bundle(target_date: str, root: Path = Path(".")) -> Path:
         json.dumps({
             "date": target_date,
             "artifact_name": f"a-share-monitor-{target_date}",
+            "expected_mother_date": mother_date,
             "expected_mother_filename": expected_mother,
             "renderer_version": RENDERER_VERSION,
             "renderer_command": render_manifest["web_execution"]["command"]

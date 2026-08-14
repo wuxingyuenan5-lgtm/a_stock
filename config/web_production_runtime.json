@@ -1,5 +1,5 @@
 {
-  "runtime_version": "2.2",
+  "runtime_version": "2.3",
   "project": "A股每日市场监控",
   "repository": "wuxingyuenan5-lgtm/a_stock",
   "branch": "main",
@@ -10,7 +10,7 @@
     "web_run_request": "ops/run_request.json",
     "web_trigger_workflow": ".github/workflows/web_run_trigger.yml",
     "renderer": "run_excel_renderer.py",
-    "renderer_version": "1.4",
+    "renderer_version": "1.5",
     "renderer_config": "config/excel_renderer.json"
   },
   "web_daily_protocol": [
@@ -51,7 +51,22 @@
     "forbid_delete_all_drawings": true,
     "forbid_new_charts": true,
     "must_preserve_chart_counts_anchors_and_series_counts": true,
-    "series_label_may_change_only_when_configured_metric_fallback_changes": true
+    "series_metric_identity_is_fixed": true,
+    "market_chart_titles_must_show_latest_effective_date": true
+  },
+  "innovation_policy": {
+    "amount_share": "innovation amount / same-day all-A amount",
+    "turnover": "supplier-direct concept-board turnover only",
+    "turnover_primary": "AKShare stock_board_concept_spot_em / stock_board_concept_hist_em",
+    "activity_proxy": "retired",
+    "fallback_null_never_erases_verified_history": true,
+    "historical_non_null_survives_source_switch": true
+  },
+  "index_policy": {
+    "primary": "AKShare index_zh_a_hist standard interface",
+    "current_day_fallback": "AKShare stock_zh_index_spot_em bulk index quote",
+    "last_fallback": "legacy Eastmoney direct K-line with one delayed retry",
+    "avoid_single_endpoint_failure_across_all_three_indices": true
   },
   "data_policy": {
     "renderer_never_calls_market_api": true,
@@ -74,7 +89,7 @@
     "mother workbook unavailable as raw xlsx",
     "mother workbook required sheets/chart invariants fail",
     "payload validation FAIL",
-    "renderer validation FAIL after applying configured metric-fallback chart-label rule",
+    "renderer validation FAIL",
     "chart count/anchor/series-count structure changed",
     "formula error scan fails"
   ],
