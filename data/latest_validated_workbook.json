@@ -1,8 +1,9 @@
 {
-  "date": "2026-08-13",
-  "filename": "A股每日市场监控_20260813.xlsx",
-  "sha256": "f72459de0d182c110a27cea9c5620ef71b1aee8e888aaff6585cabd4adcbb35a",
-  "validation": "PASS",
+  "date": "2026-08-14",
+  "filename": "A股每日市场监控_20260814.xlsx",
+  "sha256": "be6e431e12c90ac46515f514d27a292afcd3df049ad4660645f5830b0289be6e",
+  "validation": "PASS_WITH_DATA_WARN",
   "source": "web_chat_verified_delivery",
-  "next_use": "rolling_mother"
+  "next_use": "rolling_mother",
+  "notes": "三项指数8/14主请求及同源二次重试均失败，按规则留空；创新药当前快照已到8/14，备用历史序列最新8/13且无可靠换手率。"
 }
