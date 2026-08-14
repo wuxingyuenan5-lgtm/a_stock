@@ -1,0 +1,236 @@
+{
+  "schema_version": "1.0",
+  "date": "2026-08-14",
+  "market": {
+    "date": "2026-08-14",
+    "advance": 2306,
+    "decline": 2871,
+    "flat": 154,
+    "limit_up": 62,
+    "limit_down": 13,
+    "effective_stocks": 5331,
+    "total_amount_100m": 21415.40894192,
+    "hot_count": 12,
+    "hot_amount_100m": 1796.1331224600003,
+    "hot_concentration": 0.08387106346328627,
+    "market_breadth": -0.10913656557852038
+  },
+  "indices": {
+    "上证50": {
+      "date": "2026-08-14",
+      "name": "上证50",
+      "code": "1.000016",
+      "close": null,
+      "return": null,
+      "amount_100m": null,
+      "source": "东方财富历史K线直连",
+      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+    },
+    "Choice微盘": {
+      "date": "2026-08-14",
+      "name": "Choice微盘",
+      "code": "47.800007",
+      "close": null,
+      "return": null,
+      "amount_100m": null,
+      "source": "东方财富历史K线直连",
+      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+    },
+    "中证全指": {
+      "date": "2026-08-14",
+      "name": "中证全指",
+      "code": "1.000985",
+      "close": null,
+      "return": null,
+      "amount_100m": null,
+      "source": "东方财富历史K线直连",
+      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+    }
+  },
+  "hot_stocks": [
+    {
+      "rank": 1,
+      "stock_code": "688825",
+      "stock_name": "长鑫科技",
+      "close": 55.18,
+      "return": 0.04349,
+      "amount_100m": 198.6192021,
+      "sw_level1": "电子",
+      "sw_level2": "半导体"
+    },
+    {
+      "rank": 2,
+      "stock_code": "603986",
+      "stock_name": "兆易创新",
+      "close": 417.48,
+      "return": 0.03209,
+      "amount_100m": 196.98931498,
+      "sw_level1": "电子",
+      "sw_level2": "半导体"
+    },
+    {
+      "rank": 3,
+      "stock_code": "600487",
+      "stock_name": "亨通光电",
+      "close": 62.98,
+      "return": 0.10009,
+      "amount_100m": 191.96727611,
+      "sw_level1": "通信",
+      "sw_level2": "通信设备"
+    },
+    {
+      "rank": 4,
+      "stock_code": "300308",
+      "stock_name": "中际旭创",
+      "close": 943.0,
+      "return": 0.02384,
+      "amount_100m": 186.90993448,
+      "sw_level1": "通信",
+      "sw_level2": "通信设备"
+    },
+    {
+      "rank": 5,
+      "stock_code": "300502",
+      "stock_name": "新易盛",
+      "close": 448.08,
+      "return": 0.04229,
+      "amount_100m": 171.5153456,
+      "sw_level1": "通信",
+      "sw_level2": "通信设备"
+    },
+    {
+      "rank": 6,
+      "stock_code": "300394",
+      "stock_name": "天孚通信",
+      "close": 267.71,
+      "return": 0.04103,
+      "amount_100m": 137.34994212,
+      "sw_level1": "通信",
+      "sw_level2": "通信设备"
+    },
+    {
+      "rank": 7,
+      "stock_code": "600522",
+      "stock_name": "中天科技",
+      "close": 35.55,
+      "return": 0.08055,
+      "amount_100m": 132.80188653,
+      "sw_level1": "通信",
+      "sw_level2": "通信设备"
+    },
+    {
+      "rank": 8,
+      "stock_code": "000938",
+      "stock_name": "紫光股份",
+      "close": 39.95,
+      "return": 0.00884,
+      "amount_100m": 130.42122141,
+      "sw_level1": "计算机",
+      "sw_level2": "IT服务Ⅱ"
+    },
+    {
+      "rank": 9,
+      "stock_code": "600176",
+      "stock_name": "中国巨石",
+      "close": 44.39,
+      "return": 0.05943,
+      "amount_100m": 121.73014901,
+      "sw_level1": "建筑材料",
+      "sw_level2": "玻璃玻纤"
+    },
+    {
+      "rank": 10,
+      "stock_code": "002384",
+      "stock_name": "东山精密",
+      "close": 205.19,
+      "return": 0.01524,
+      "amount_100m": 114.1956809,
+      "sw_level1": "电子",
+      "sw_level2": "元件"
+    },
+    {
+      "rank": 11,
+      "stock_code": "688256",
+      "stock_name": "寒武纪",
+      "close": 1093.0,
+      "return": -0.01131,
+      "amount_100m": 110.77385737,
+      "sw_level1": "电子",
+      "sw_level2": "半导体"
+    },
+    {
+      "rank": 12,
+      "stock_code": "688981",
+      "stock_name": "中芯国际",
+      "close": 132.87,
+      "return": 0.0265,
+      "amount_100m": 102.85931185,
+      "sw_level1": "电子",
+      "sw_level2": "半导体"
+    }
+  ],
+  "sw_crowding": {
+    "date": "2026-08-13",
+    "targets": {
+      "通信设备": {
+        "date": "2026-08-13",
+        "code": "801102",
+        "name": "通信设备",
+        "amount_100m": null,
+        "amount_share_of_a": 0.0895,
+        "turnover": 0.0911,
+        "share_source": "申万官方成交额占比"
+      },
+      "计算机设备": {
+        "date": "2026-08-13",
+        "code": "801101",
+        "name": "计算机设备",
+        "amount_100m": null,
+        "amount_share_of_a": 0.0202,
+        "turnover": 0.0529,
+        "share_source": "申万官方成交额占比"
+      },
+      "元件": {
+        "date": "2026-08-13",
+        "code": "801083",
+        "name": "元件",
+        "amount_100m": null,
+        "amount_share_of_a": 0.0703,
+        "turnover": 0.1082,
+        "share_source": "申万官方成交额占比"
+      },
+      "半导体": {
+        "date": "2026-08-13",
+        "code": "801081",
+        "name": "半导体",
+        "amount_100m": null,
+        "amount_share_of_a": 0.1649,
+        "turnover": 0.0695,
+        "share_source": "申万官方成交额占比"
+      }
+    },
+    "combined": {
+      "amount_100m": null,
+      "amount_share_of_a": 0.3449
+    }
+  },
+  "innovation_drug": {
+    "date": "2026-08-14",
+    "amount_100m": 1287.77,
+    "amount_share_of_a": 0.06013286991121753,
+    "turnover": null,
+    "volume_activity_20d": null,
+    "return": -0.0027,
+    "volume": null,
+    "topic_code": "INNOVATION_DRUG_THEME",
+    "source": "同花顺 stock_board_concept_info_ths",
+    "history_latest_date": "2026-08-13",
+    "history_source_mode": "ths",
+    "current_source_mode": "ths",
+    "turnover_status": "当前备用源不提供板块总换手率"
+  },
+  "rendering": {
+    "table_order": "descending",
+    "chart_time_order": "ascending"
+  }
+}

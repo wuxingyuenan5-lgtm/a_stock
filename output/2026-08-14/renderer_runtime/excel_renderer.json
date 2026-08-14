@@ -1,0 +1,141 @@
+{
+  "renderer_version": "1.4",
+  "mother_policy": {
+    "mode": "rolling_previous_validated",
+    "bootstrap_file_library_name": "A股每日市场监控_优化版_20260810.xlsx",
+    "bootstrap_sha256": "8d02be03f928cacf082cbdaa4e56dbd0ef98969fa1f53f99b174a154d9a58869",
+    "required_sheets": [
+      "00_市场总览",
+      "01_申万行业",
+      "02_统一历史数据",
+      "03_市场宽度图",
+      "04_百亿成交历史",
+      "05_申万行业资金拥挤度",
+      "06_综合拥挤度_辅助",
+      "07_创新药交易拥挤度",
+      "99_口径与质量"
+    ],
+    "acceptance": "required sheets + chart invariants + validator; rolling mother is not rejected for hash drift"
+  },
+  "bundle": {
+    "required_files": [
+      "daily_payload.json",
+      "validation.json",
+      "source_manifest.json",
+      "hot_stocks.csv",
+      "innovation_history_selected.csv",
+      "sw_industry_latest.csv",
+      "render_bundle_manifest.json"
+    ],
+    "runtime_files": [
+      "renderer_runtime/run_excel_renderer_v14.py",
+      "renderer_runtime/excel_renderer_artifact.py",
+      "renderer_runtime/excel_renderer.json"
+    ]
+  },
+  "sheet_contracts": {
+    "01_申万行业": {
+      "header_row": 6,
+      "first_data_row": 7,
+      "source": "sw_industry_latest.csv",
+      "replace_snapshot": true,
+      "never_cross_fill_sources": true
+    },
+    "02_统一历史数据": {
+      "header_row": 5,
+      "first_data_row": 6,
+      "order": "date_desc",
+      "upsert_key": "date",
+      "derived_formula_columns": ["P", "Q", "R", "S"]
+    },
+    "03_市场宽度图": {
+      "chart_order": "date_asc",
+      "source_sheet": "02_统一历史数据",
+      "charts": ["上涨与下跌家数", "涨停与跌停家数", "市场宽度"],
+      "update_existing_charts_only": true
+    },
+    "04_百亿成交历史": {
+      "matrix_header_row": 5,
+      "matrix_recent_dates": 6,
+      "matrix_rows": 14,
+      "named_rows_max": 13,
+      "overflow_bucket": "其他行业汇总",
+      "long_table_header_row": 22,
+      "long_table_first_data_row": 23,
+      "threshold_100m": 100,
+      "order": "date_desc_rank_asc"
+    },
+    "05_申万行业资金拥挤度": {
+      "first_data_row": 63,
+      "order": "date_desc",
+      "required_target_count": 4,
+      "update_only_when_official_payload_available": true,
+      "derive_amount_from_same_day_all_a_when_payload_amount_missing": true,
+      "update_existing_charts_only": true
+    },
+    "06_综合拥挤度_辅助": {
+      "header_row": 5,
+      "first_data_row": 6,
+      "source": "sw_industry_latest.csv + 02 same-day all-A denominator",
+      "target_codes": ["801102", "801101", "801083", "801081"],
+      "update_only_on_same_day_complete_targets": true
+    },
+    "07_创新药交易拥挤度": {
+      "header_row": 32,
+      "first_data_row": 33,
+      "order": "date_desc",
+      "history_rule": "single_source_only",
+      "preferred_chart_metric": "turnover",
+      "fallback_chart_metric": "volume_activity_20d",
+      "rewrite_from_selected_history": true,
+      "update_existing_charts_only": true
+    },
+    "99_口径与质量": {
+      "must_record_renderer_version": true,
+      "must_record_payload_validation_status": true,
+      "must_record_missing_modules": true,
+      "must_record_mother_sha256": true,
+      "must_record_chart_structure_check": true
+    }
+  },
+  "chart_invariants": {
+    "mode": "existing_excel_native_charts_update_only",
+    "forbid_delete_all_drawings": true,
+    "forbid_new_chart_objects_in_daily_run": true,
+    "sheet_chart_counts": {
+      "00_市场总览": 9,
+      "03_市场宽度图": 3,
+      "05_申万行业资金拥挤度": 4,
+      "07_创新药交易拥挤度": 2
+    },
+    "preserve_anchor_positions": true,
+    "preserve_series_identities": true,
+    "time_axis": "bottom",
+    "gridlines": "off"
+  },
+  "missing_data_policy": {
+    "never_replace_missing_with_zero": true,
+    "never_cross_fill_sources": true,
+    "same_date_rerun_preserve_verified_non_null_when_payload_null": true,
+    "new_date_payload_null_remains_blank": true,
+    "sw_missing_keeps_last_official_effective_date": true,
+    "innovation_source_change_requires_full_selected_history": true
+  },
+  "web_execution": {
+    "preferred_mode": "single_bundle",
+    "steps": [
+      "read data/latest_bundle_pointer.json",
+      "download one named workflow artifact",
+      "locate expected rolling mother workbook",
+      "run bundled renderer once",
+      "run validator once",
+      "deliver xlsx"
+    ],
+    "forbid_manual_business_recalculation": true,
+    "forbid_free_rebuild_when_mother_unavailable": true
+  },
+  "output": {
+    "filename_pattern": "A股每日市场监控_YYYYMMDD.xlsx",
+    "formula_error_scan": "#REF!|#DIV/0!|#VALUE!|#NAME?|#N/A"
+  }
+}

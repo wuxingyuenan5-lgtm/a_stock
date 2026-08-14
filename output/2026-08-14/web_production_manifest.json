@@ -1,0 +1,7 @@
+{
+  "date": "2026-08-14",
+  "artifact_name": "a-share-monitor-2026-08-14",
+  "expected_mother_filename": "A股每日市场监控_20260810.xlsx",
+  "renderer_version": "1.4",
+  "renderer_command": "python renderer_runtime/run_excel_renderer_v14.py --template <mother.xlsx> --bundle-dir . --config renderer_runtime/excel_renderer.json --output A股每日市场监控_20260814.xlsx"
+}

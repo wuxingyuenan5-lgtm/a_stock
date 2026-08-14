@@ -1,0 +1,54 @@
+{
+  "date": "2026-08-14",
+  "status": "WARN",
+  "checks": [
+    {
+      "name": "market_breadth_sum",
+      "ok": true,
+      "level": "FAIL",
+      "detail": "5331 vs 5331"
+    },
+    {
+      "name": "hot_count",
+      "ok": true,
+      "level": "FAIL",
+      "detail": "12 vs 12"
+    },
+    {
+      "name": "hot_amount",
+      "ok": true,
+      "level": "FAIL",
+      "detail": "1796.1331 vs 1796.1331224600003"
+    },
+    {
+      "name": "indices",
+      "ok": false,
+      "level": "WARN",
+      "detail": "上证50=error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable; Choice微盘=error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable; 中证全指=error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+    },
+    {
+      "name": "sw_targets",
+      "ok": true,
+      "level": "WARN",
+      "detail": "4 targets"
+    },
+    {
+      "name": "innovation_current",
+      "ok": true,
+      "level": "WARN",
+      "detail": "2026-08-14"
+    },
+    {
+      "name": "innovation_turnover",
+      "ok": false,
+      "level": "WARN",
+      "detail": "None"
+    },
+    {
+      "name": "sw_mapping_cache",
+      "ok": true,
+      "level": "WARN",
+      "detail": "available"
+    }
+  ]
+}
