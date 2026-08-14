@@ -15,6 +15,7 @@ class RendererContractTest(unittest.TestCase):
 
     def test_v15_preserves_existing_chart_objects_and_turnover_history(self):
         text = (ROOT / "run_excel_renderer_v15.py").read_text(encoding="utf-8")
+        compile(text, "run_excel_renderer_v15.py", "exec")
         self.assertNotIn("delete_all_drawings", text)
         self.assertNotIn("charts.add", text)
         self.assertIn("update_07_rolling", text)
