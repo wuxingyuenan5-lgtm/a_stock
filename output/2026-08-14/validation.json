@@ -1,6 +1,6 @@
 {
   "date": "2026-08-14",
-  "status": "WARN",
+  "status": "PASS",
   "checks": [
     {
       "name": "market_breadth_sum",
@@ -22,9 +22,9 @@
     },
     {
       "name": "indices",
-      "ok": false,
+      "ok": true,
       "level": "WARN",
-      "detail": "上证50=error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); Choice微盘=error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); 中证全指=error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+      "detail": "上证50=ok_current_quote_hard_timeout; Choice微盘=ok_current_quote_hard_timeout; 中证全指=ok_current_quote_hard_timeout"
     },
     {
       "name": "sw_targets",
@@ -40,9 +40,9 @@
     },
     {
       "name": "innovation_turnover",
-      "ok": false,
+      "ok": true,
       "level": "WARN",
-      "detail": "None"
+      "detail": "0.0438"
     },
     {
       "name": "sw_mapping_cache",

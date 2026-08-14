@@ -4,14 +4,14 @@
   "sources": {
     "a_share_snapshot": "AKShare stock_zh_a_spot / 新浪",
     "indices": {
-      "上证50": "东方财富历史K线直连",
-      "Choice微盘": "东方财富历史K线直连",
-      "中证全指": "东方财富历史K线直连"
+      "上证50": "东方财富轻量指数报价 / api/qt/stock/get",
+      "Choice微盘": "东方财富轻量指数报价 / api/qt/stock/get",
+      "中证全指": "东方财富轻量指数报价 / api/qt/stock/get"
     },
     "sw_analysis": "AKShare index_analysis_daily_sw / 申万",
     "innovation_drug": {
-      "history_mode": "ths",
-      "current_mode": "ths"
+      "history_mode": "eastmoney",
+      "current_mode": "none"
     },
     "sw_mapping": "AKShare sw_index_second_info + index_component_sw"
   },
@@ -23,10 +23,10 @@
     "innovation_history_ths": "data/history/innovation_drug_ths.csv"
   },
   "timings_seconds": {
-    "market_snapshot_s": 50.292,
-    "indices_s": 249.021,
-    "sw_analysis_s": 0.01,
-    "innovation_drug_s": 119.779,
-    "total_s": 419.16
+    "market_snapshot_s": 70.214,
+    "indices_s": 2.512,
+    "sw_analysis_s": 0.006,
+    "innovation_drug_s": 9.201,
+    "total_s": 81.99
   }
 }

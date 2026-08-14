@@ -2,9 +2,9 @@
   "date": "2026-08-14",
   "renderer_bundle_version": "2.1",
   "renderer_version": "1.5",
-  "innovation_history_source_mode": "ths",
-  "innovation_history_rows": 148,
-  "innovation_history_share_rows": 144,
+  "innovation_history_source_mode": "eastmoney",
+  "innovation_history_rows": 149,
+  "innovation_history_share_rows": 145,
   "innovation_activity_proxy": "retired",
   "market_core_rows": 145,
   "mother_policy": {

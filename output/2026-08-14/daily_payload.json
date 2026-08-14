@@ -20,31 +20,31 @@
       "date": "2026-08-14",
       "name": "上证50",
       "code": "1.000016",
-      "close": null,
-      "return": null,
-      "amount_100m": null,
-      "source": "东方财富历史K线直连",
-      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+      "close": 2916.13,
+      "return": -0.0040999999999999995,
+      "amount_100m": 1523.71929566,
+      "source": "东方财富轻量指数报价 / api/qt/stock/get",
+      "status": "ok_current_quote_hard_timeout"
     },
     "Choice微盘": {
       "date": "2026-08-14",
       "name": "Choice微盘",
       "code": "47.800007",
-      "close": null,
-      "return": null,
-      "amount_100m": null,
-      "source": "东方财富历史K线直连",
-      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+      "close": 1823.92,
+      "return": 0.0034000000000000002,
+      "amount_100m": 160.96252928,
+      "source": "东方财富轻量指数报价 / api/qt/stock/get",
+      "status": "ok_current_quote_hard_timeout"
     },
     "中证全指": {
       "date": "2026-08-14",
       "name": "中证全指",
       "code": "1.000985",
-      "close": null,
-      "return": null,
-      "amount_100m": null,
-      "source": "东方财富历史K线直连",
-      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
+      "close": 5991.02,
+      "return": 0.003,
+      "amount_100m": 20797.76591782,
+      "source": "东方财富轻量指数报价 / api/qt/stock/get",
+      "status": "ok_current_quote_hard_timeout"
     }
   },
   "hot_stocks": [
@@ -216,18 +216,18 @@
   },
   "innovation_drug": {
     "date": "2026-08-14",
-    "amount_100m": 1287.77,
-    "amount_share_of_a": 0.06013286991121753,
-    "turnover": null,
-    "volume_activity_20d": null,
-    "return": -0.0027,
-    "volume": null,
+    "amount_100m": 1037.27030799,
+    "amount_share_of_a": 0.04843569930432547,
+    "turnover": 0.0438,
+    "volume_activity_20d": 1.3777290136693454,
+    "return": -0.0054,
+    "volume": 65909757.0,
+    "source": "东方财富创新药BK1106历史K线直连",
     "topic_code": "INNOVATION_DRUG_THEME",
-    "source": "同花顺 stock_board_concept_info_ths",
-    "history_latest_date": "2026-08-13",
-    "history_source_mode": "ths",
-    "current_source_mode": "ths",
-    "turnover_status": "当前备用源不提供板块总换手率"
+    "history_latest_date": "2026-08-14",
+    "history_source_mode": "eastmoney",
+    "current_source_mode": "none",
+    "turnover_status": "供应商直接字段"
   },
   "rendering": {
     "table_order": "descending",
