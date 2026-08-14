@@ -1,10 +1,10 @@
 {
   "date": "2026-08-14",
-  "filename": "A股每日市场监控_20260814_修正版.xlsx",
-  "sha256": "29b47339556d26470e7d8584df5370e302d0ea03daae37d35992d11acd0cb4b8",
-  "validation": "PASS_WITH_DATA_WARN",
-  "source": "web_chat_verified_delivery_after_20260814_review",
+  "filename": "A股每日市场监控_20260814_最终修正版.xlsx",
+  "sha256": "95406cd71db8f0c18feea60050e8a6049e090b1f4b2b05c0c5fd32b5f326ce65",
+  "validation": "PASS",
+  "source": "web_chat_renderer_v1.5_after_bounded_quote_rerun",
   "next_use": "rolling_mother",
-  "renderer_version": "1.5-policy-compatible",
-  "notes": "修复创新药：恢复8/13及以前可靠换手率历史、停用20日成交量活跃度代理、8/11成交额占比按02同日全A分母补算、8/7因分母仍缺失留空；03/00市场图标题显式标注最新日期。8/14三项指数旧bundle仍为空，生产源已在PR #31改为多接口韧性链，待下一正式生产验证。"
+  "renderer_version": "1.5",
+  "notes": "8/14三项指数已由东方财富轻量指数报价补齐；创新药8/14成交额/成交占比/供应商直接换手率均已补齐；20日成交量活跃度代理已停用；8/11创新药成交占比按02同日全A分母补算，当前仅8/7因同日全A分母缺失保持空白；03/00市场结构图已验证series最新点为8/14并在标题显式标注日期。"
 }
