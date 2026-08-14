@@ -1,5 +1,5 @@
 {
-  "runtime_version": "2.3",
+  "runtime_version": "2.4",
   "project": "A股每日市场监控",
   "repository": "wuxingyuenan5-lgtm/a_stock",
   "branch": "main",
@@ -57,15 +57,18 @@
   "innovation_policy": {
     "amount_share": "innovation amount / same-day all-A amount",
     "turnover": "supplier-direct concept-board turnover only",
-    "turnover_primary": "AKShare stock_board_concept_spot_em / stock_board_concept_hist_em",
+    "turnover_primary": "Eastmoney BK1106 lightweight board quote / f168 with connect-read hard timeout",
+    "historical_source": "existing Eastmoney BK1106 K-line cache; incremental history request already hard-timeout bounded",
+    "ths_fallback_in_daily_critical_path": false,
     "activity_proxy": "retired",
     "fallback_null_never_erases_verified_history": true,
     "historical_non_null_survives_source_switch": true
   },
   "index_policy": {
-    "primary": "AKShare index_zh_a_hist standard interface",
-    "current_day_fallback": "AKShare stock_zh_index_spot_em bulk index quote",
-    "last_fallback": "legacy Eastmoney direct K-line with one delayed retry",
+    "primary": "Eastmoney lightweight current quote api/qt/stock/get per secid, parallel, hard timeout",
+    "fallback": "legacy Eastmoney K-line collector for failed secids only; collector already has hard timeout and internal retry",
+    "extra_outer_retry": false,
+    "daily_history_request_as_primary": false,
     "avoid_single_endpoint_failure_across_all_three_indices": true
   },
   "data_policy": {
@@ -81,7 +84,9 @@
     "no_repo_wide_search_on_normal_daily_run": true,
     "no_manual_business_recalculation": true,
     "no_full_unit_test_suite_on_normal_production_dispatch": true,
-    "slow_shenwan_full_history_refresh_not_in_critical_path": true
+    "slow_shenwan_full_history_refresh_not_in_critical_path": true,
+    "no_unbounded_index_or_innovation_network_call_in_daily_critical_path": true,
+    "daily_indices_use_current_quotes_not_history_as_primary": true
   },
   "hard_stop_conditions": [
     "web trigger fails or latest pointer still not target date after official workflow completes",

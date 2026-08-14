@@ -1,22 +1,23 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-import time
 
-import akshare as ak
 import pandas as pd
+import requests
 
 from . import pipeline
-from .collectors import (
-    fetch_indices as fetch_indices_direct,
-    fetch_innovation_current_em as fetch_innovation_current_direct,
-)
-from .common import ensure_dir, retry
+from .collectors import fetch_indices as fetch_indices_legacy
+from .common import retry
 from .fast_market import fetch_a_share_spot_fast
 from .sw_cache import load_sw_cache
 
 
-INDEX_SPOT_GROUPS = ["沪深重要指数", "上证系列指数", "深证系列指数", "指数成份", "中证系列指数"]
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
+EM_INDEX_QUOTE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
+EM_CONCEPT_QUOTE_URL = "https://91.push2.eastmoney.com/api/qt/stock/get"
+EM_UT = "bd1d9ddb04089700cf9c27f6f7426281"
+INNOVATION_SECID = "90.BK1106"
 
 
 def _number(value):
@@ -24,241 +25,147 @@ def _number(value):
     return None if pd.isna(result) else float(result)
 
 
-def _index_record_from_hist(target_date: str, definition: dict[str, str]):
-    """Primary path for common indices: AKShare standard index history interface.
+def _request_json(url: str, params: dict) -> dict:
+    def call():
+        response = requests.get(
+            url,
+            params=params,
+            headers={"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"},
+            timeout=(3, 6),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("data"):
+            raise RuntimeError("empty Eastmoney quote payload")
+        return payload
 
-    Unlike the former hand-written push2his request, this uses AKShare's supported
-    index_zh_a_hist wrapper and returns close, daily return and turnover amount in
-    one row. The function is valid for the current-day production target only.
+    return retry(call, attempts=2, delay=0.6)
+
+
+def _index_current_quote(target_date: str, definition: dict[str, str]) -> dict[str, object]:
+    """Current-day quote for one index with hard HTTP timeouts.
+
+    Eastmoney's quote endpoint exposes latest price (f43), daily percentage
+    change (f170) and turnover amount (f48) for any known secid, including the
+    Choice micro-cap index secid 47.800007. Daily production only targets the
+    current China trading date, so a current quote is sufficient and avoids a
+    slow historical request in the critical path.
     """
-    code = str(definition["secid"]).split(".")[-1]
-    compact = target_date.replace("-", "")
-    frame = retry(
-        lambda: ak.index_zh_a_hist(
-            symbol=code,
-            period="daily",
-            start_date=compact,
-            end_date=compact,
-        ),
-        attempts=2,
-        delay=0.8,
+    payload = _request_json(
+        EM_INDEX_QUOTE_URL,
+        {
+            "secid": definition["secid"],
+            "fields": "f43,f48,f57,f58,f86,f170",
+            "fltt": "2",
+            "invt": "2",
+            "ut": EM_UT,
+        },
     )
-    required = {"日期", "收盘", "涨跌幅", "成交额"}
-    if frame is None or frame.empty or not required.issubset(frame.columns):
-        raise RuntimeError(f"index_zh_a_hist missing row/columns for {definition['name']}")
-    rows = frame.copy()
-    rows["__date"] = pd.to_datetime(rows["日期"], errors="coerce").dt.strftime("%Y-%m-%d")
-    rows = rows[rows["__date"] == target_date]
-    if rows.empty:
-        raise RuntimeError(f"index_zh_a_hist target date missing: {definition['name']} {target_date}")
-    row = rows.iloc[-1]
-    close = _number(row["收盘"])
-    ret = _number(row["涨跌幅"])
-    amount = _number(row["成交额"])
-    if close is None or ret is None or amount is None:
-        raise RuntimeError(f"index_zh_a_hist null fields: {definition['name']}")
+    data = payload["data"]
+    close = _number(data.get("f43"))
+    amount = _number(data.get("f48"))
+    pct = _number(data.get("f170"))
+    if close is None or amount is None or pct is None:
+        raise RuntimeError(f"current quote missing fields: {definition['name']}")
     return {
         "date": target_date,
         "name": definition["name"],
         "code": definition["secid"],
         "close": close,
-        "return": ret / 100,
+        "return": pct / 100,
         "amount_100m": amount / 1e8,
-        "source": "AKShare index_zh_a_hist / 东方财富标准指数接口",
-        "status": "ok_primary_standard_index",
+        "source": "东方财富轻量指数报价 / api/qt/stock/get",
+        "status": "ok_current_quote_hard_timeout",
     }
 
 
-def _index_record_from_spot(target_date: str, definition: dict[str, str]):
-    """Current-day bulk index quote fallback; useful for Choice proprietary indices."""
-    code = str(definition["secid"]).split(".")[-1]
-    name = definition["name"]
-    errors = []
-    for group in INDEX_SPOT_GROUPS:
-        try:
-            frame = retry(lambda g=group: ak.stock_zh_index_spot_em(symbol=g), attempts=2, delay=0.5)
-        except Exception as exc:
-            errors.append(f"{group}:{exc}")
-            continue
-        if frame is None or frame.empty or not {"代码", "名称", "最新价", "涨跌幅", "成交额"}.issubset(frame.columns):
-            continue
-        codes = frame["代码"].astype(str).str.replace(r"\.0$", "", regex=True)
-        names = frame["名称"].astype(str).str.strip()
-        hit = frame[(codes == code) | (names == name)]
-        if hit.empty:
-            continue
-        row = hit.iloc[-1]
-        close = _number(row["最新价"])
-        ret = _number(row["涨跌幅"])
-        amount = _number(row["成交额"])
-        if close is None or ret is None or amount is None:
-            continue
-        return {
-            "date": target_date,
-            "name": name,
-            "code": definition["secid"],
-            "close": close,
-            "return": ret / 100,
-            "amount_100m": amount / 1e8,
-            "source": f"AKShare stock_zh_index_spot_em / 东方财富批量指数行情({group})",
-            "status": "ok_bulk_spot_fallback",
-        }
-    raise RuntimeError("bulk index spot not found; " + " | ".join(errors[-2:]))
-
-
 def fetch_indices_resilient(target_date: str, definitions: list[dict[str, str]]):
-    """Fetch common indices through independent supported paths before raw direct fallback.
+    """Parallel current quotes, then bounded historical fallback only for failures."""
+    primary: dict[str, dict[str, object]] = {}
+    failed: list[dict[str, str]] = []
 
-    Order per index:
-    1) AKShare standard index history wrapper;
-    2) Eastmoney bulk index spot table for the current production date;
-    3) legacy direct K-line collector, followed by one delayed same-source retry.
-
-    A failure in one interface therefore no longer blanks all three indices together.
-    """
-    results = []
-    failed = []
-    for definition in definitions:
-        errors = []
-        record = None
-        for fetcher in (_index_record_from_hist, _index_record_from_spot):
+    with ThreadPoolExecutor(max_workers=max(1, len(definitions))) as executor:
+        future_map = {
+            executor.submit(_index_current_quote, target_date, definition): definition
+            for definition in definitions
+        }
+        for future in as_completed(future_map):
+            definition = future_map[future]
             try:
-                record = fetcher(target_date, definition)
-                break
-            except Exception as exc:
-                errors.append(f"{fetcher.__name__}: {exc}")
-        if record is None:
-            failed.append((definition, errors))
-            results.append(None)
-        else:
-            results.append(record)
+                primary[definition["name"]] = future.result()
+            except Exception:
+                failed.append(definition)
 
+    fallback_map: dict[str, dict[str, object]] = {}
     if failed:
-        retry_defs = [item for item, _ in failed]
-        first = fetch_indices_direct(target_date, retry_defs)
-        first_map = {str(item.get("name")): item for item in first}
-        still_failed = [
-            d for d in retry_defs
-            if (first_map.get(d["name"]) or {}).get("close") is None
-            or (first_map.get(d["name"]) or {}).get("return") is None
-            or (first_map.get(d["name"]) or {}).get("amount_100m") is None
-        ]
-        second_map = {}
-        if still_failed:
-            time.sleep(1.5)
-            second = fetch_indices_direct(target_date, still_failed)
-            second_map = {str(item.get("name")): item for item in second}
+        # Legacy K-line collector already has connect/read hard timeouts and its
+        # own two attempts. Do not add another outer retry: keep the daily path bounded.
+        fallback = fetch_indices_legacy(target_date, failed)
+        fallback_map = {str(item.get("name")): item for item in fallback}
 
-        error_map = {d["name"]: errs for d, errs in failed}
-        replacement = {}
-        for definition in retry_defs:
-            name = definition["name"]
-            candidate = first_map.get(name)
-            retry_candidate = second_map.get(name)
-            if retry_candidate is not None and all(
-                retry_candidate.get(key) is not None for key in ("close", "return", "amount_100m")
-            ):
-                candidate = dict(retry_candidate)
-                candidate["status"] = "ok_legacy_direct_after_second_pass"
-            if candidate is None:
-                candidate = {
-                    "date": target_date,
-                    "name": name,
-                    "code": definition["secid"],
-                    "close": None,
-                    "return": None,
-                    "amount_100m": None,
-                    "source": "index resilient chain",
-                    "status": "error",
-                }
-            if candidate.get("close") is None or candidate.get("return") is None or candidate.get("amount_100m") is None:
-                candidate = dict(candidate)
-                candidate["status"] = (
-                    f"{candidate.get('status')}; standard/bulk/direct unavailable; "
-                    + " | ".join(error_map.get(name, []))
-                )
-            replacement[name] = candidate
-
-        for i, definition in enumerate(definitions):
-            if results[i] is None:
-                results[i] = replacement[definition["name"]]
-
-    return results
-
-
-def _innovation_em_frame_supported(start_date: str, end_date: str) -> pd.DataFrame:
-    frame = retry(
-        lambda: ak.stock_board_concept_hist_em(
-            symbol="创新药",
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust="",
-        ),
-        attempts=2,
-        delay=0.8,
-    )
-    required = {"日期", "收盘", "成交量", "成交额", "涨跌幅", "换手率"}
-    if frame is None or frame.empty or not required.issubset(frame.columns):
-        raise RuntimeError("stock_board_concept_hist_em returned no usable 创新药 history")
-    out = pd.DataFrame({
-        "日期": pd.to_datetime(frame["日期"], errors="coerce"),
-        "收盘价": pd.to_numeric(frame["收盘"], errors="coerce"),
-        "成交量": pd.to_numeric(frame["成交量"], errors="coerce"),
-        "成交额": pd.to_numeric(frame["成交额"], errors="coerce"),
-        "日收益率": pd.to_numeric(frame["涨跌幅"], errors="coerce") / 100,
-        "换手率": pd.to_numeric(frame["换手率"], errors="coerce") / 100,
-        "数据源": "AKShare stock_board_concept_hist_em / 东方财富创新药概念板块",
-    })
-    return out.dropna(subset=["日期", "收盘价", "成交额"]).sort_values("日期")
-
-
-def update_innovation_history_reliable(target_date: str, history_path: Path, history_start: str) -> pd.DataFrame:
-    """Reliable turnover history via supported Eastmoney concept-board interface."""
-    ensure_dir(history_path.parent)
-    existing = pd.DataFrame()
-    if history_path.exists():
-        existing = pd.read_csv(history_path, encoding="utf-8-sig")
-        existing["日期"] = pd.to_datetime(existing["日期"], errors="coerce")
-        last_date = existing["日期"].max()
-        start = (last_date - pd.Timedelta(days=7)).strftime("%Y%m%d") if pd.notna(last_date) else history_start.replace("-", "")
-    else:
-        start = history_start.replace("-", "")
-    try:
-        fresh = _innovation_em_frame_supported(start, target_date.replace("-", ""))
-    except Exception:
-        return existing
-    combined = pd.concat([existing, fresh], ignore_index=True, sort=False) if not existing.empty else fresh
-    combined["日期"] = pd.to_datetime(combined["日期"], errors="coerce")
-    combined = combined.dropna(subset=["日期"]).drop_duplicates("日期", keep="last").sort_values("日期")
-    exported = combined.copy()
-    exported["日期"] = exported["日期"].dt.strftime("%Y-%m-%d")
-    exported.to_csv(history_path, index=False, encoding="utf-8-sig", float_format="%.10f")
-    return combined
+    out = []
+    for definition in definitions:
+        name = definition["name"]
+        record = primary.get(name) or fallback_map.get(name)
+        if record is None:
+            record = {
+                "date": target_date,
+                "name": name,
+                "code": definition["secid"],
+                "close": None,
+                "return": None,
+                "amount_100m": None,
+                "source": "bounded index quote chain",
+                "status": "error: current quote and bounded K-line fallback unavailable",
+            }
+        out.append(record)
+    return out
 
 
 def fetch_innovation_current_reliable(target_date: str):
-    """Use supported concept-board spot endpoint, which exposes direct board turnover."""
+    """Direct BK1106 board quote with real supplier turnover and hard timeout.
+
+    AKShare's stock_board_concept_spot_em implementation maps the same Eastmoney
+    fields: f48=成交额, f170=涨跌幅, f168=换手率. With fltt=1, percentage-like
+    fields are returned in 1/100 units, while f48 remains yuan after the AKShare
+    normalization. We normalize both percentage fields to decimal fractions.
+    """
     try:
-        frame = retry(lambda: ak.stock_board_concept_spot_em(symbol="创新药"), attempts=2, delay=0.8)
-        if frame is None or frame.empty or not {"item", "value"}.issubset(frame.columns):
-            raise RuntimeError("invalid stock_board_concept_spot_em response")
-        values = {str(row["item"]).strip(): row["value"] for _, row in frame.iterrows()}
-        amount = _number(values.get("成交额"))
-        turnover = _number(values.get("换手率"))
-        ret = _number(values.get("涨跌幅"))
-        if amount is None or turnover is None or ret is None:
-            raise RuntimeError("concept spot missing amount/turnover/return")
+        payload = _request_json(
+            EM_CONCEPT_QUOTE_URL,
+            {
+                "secid": INNOVATION_SECID,
+                "fields": "f43,f48,f168,f170",
+                "mpi": "1000",
+                "invt": "2",
+                "fltt": "1",
+            },
+        )
+        data = payload["data"]
+        amount = _number(data.get("f48"))
+        turnover_raw = _number(data.get("f168"))
+        return_raw = _number(data.get("f170"))
+        if amount is None or turnover_raw is None or return_raw is None:
+            raise RuntimeError("innovation quote missing amount/turnover/return")
         return {
             "date": target_date,
             "amount_100m": amount / 1e8,
-            "turnover": turnover / 100,
-            "return": ret / 100,
-            "source": "AKShare stock_board_concept_spot_em / 东方财富创新药概念板块",
+            "turnover": turnover_raw / 10000,
+            "return": return_raw / 10000,
+            "source": "东方财富创新药BK1106轻量板块报价（供应商直接换手率）",
         }
     except Exception:
-        # Keep the former direct BK1106 call only as a same-vendor fallback.
-        return fetch_innovation_current_direct(target_date)
+        # Returning None lets the pipeline mark the current innovation snapshot as
+        # unavailable. Do not enter an unbounded fallback and do not manufacture a proxy.
+        return None
+
+
+def _no_ths_current(_target_date: str):
+    return None
+
+
+def _no_ths_history(_target_date: str, _history_path: Path, _history_start: str):
+    return pd.DataFrame()
 
 
 def run(
@@ -267,12 +174,15 @@ def run(
     root: Path = Path("."),
     refresh_mapping: bool = False,
 ):
-    """Production entrypoint with resilient indices and reliable innovation turnover."""
+    """Production entrypoint with bounded current-day quotes in the critical path."""
     pipeline.fetch_a_share_spot = fetch_a_share_spot_fast
     pipeline.fetch_sw_analysis = load_sw_cache
     pipeline.fetch_indices = fetch_indices_resilient
-    pipeline.update_innovation_history = update_innovation_history_reliable
+    # Keep the existing Eastmoney BK1106 history updater: it already has hard HTTP
+    # timeouts and preserves its cached history on failure.
     pipeline.fetch_innovation_current_em = fetch_innovation_current_reliable
+    pipeline.fetch_innovation_current_ths = _no_ths_current
+    pipeline.update_innovation_history_ths = _no_ths_history
     return pipeline.run(
         target_date=target_date,
         config_path=config_path,
