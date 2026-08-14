@@ -1,10 +1,10 @@
 {
   "date": "2026-08-14",
-  "run_id": 31783682695,
+  "run_id": 31790325771,
   "artifact_name": "a-share-monitor-2026-08-14",
-  "renderer_version": "1.4",
-  "expected_mother_date": "2026-08-10",
-  "expected_mother_filename": "A股每日市场监控_20260810.xlsx",
+  "renderer_version": "1.5",
+  "expected_mother_date": "2026-08-14",
+  "expected_mother_filename": "A股每日市场监控_20260814_修正版.xlsx",
   "runtime_manifest": "config/web_production_runtime.json",
   "workflow": "daily_market_monitor.yml"
 }

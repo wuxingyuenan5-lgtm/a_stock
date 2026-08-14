@@ -24,7 +24,7 @@
       "return": null,
       "amount_100m": null,
       "source": "东方财富历史K线直连",
-      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
     },
     "Choice微盘": {
       "date": "2026-08-14",
@@ -34,7 +34,7 @@
       "return": null,
       "amount_100m": null,
       "source": "东方财富历史K线直连",
-      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
     },
     "中证全指": {
       "date": "2026-08-14",
@@ -44,7 +44,7 @@
       "return": null,
       "amount_100m": null,
       "source": "东方财富历史K线直连",
-      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); same-source second pass also unavailable"
+      "status": "error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')); standard/bulk/direct unavailable; _index_record_from_hist: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | _index_record_from_spot: bulk index spot not found; 指数成份:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) | 中证系列指数:('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))"
     }
   },
   "hot_stocks": [

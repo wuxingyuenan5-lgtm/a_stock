@@ -1,22 +1,25 @@
 {
   "date": "2026-08-14",
-  "renderer_bundle_version": "2.0",
-  "renderer_version": "1.4",
+  "renderer_bundle_version": "2.1",
+  "renderer_version": "1.5",
   "innovation_history_source_mode": "ths",
   "innovation_history_rows": 148,
   "innovation_history_share_rows": 144,
+  "innovation_activity_proxy": "retired",
   "market_core_rows": 145,
   "mother_policy": {
     "mode": "rolling_previous_validated",
-    "expected_mother_date": "2026-08-10",
-    "expected_mother_filename": "A股每日市场监控_20260810.xlsx",
-    "fallback": "bootstrap template only when no prior validated workbook exists"
+    "registry": "data/latest_validated_workbook.json",
+    "expected_mother_date": "2026-08-14",
+    "expected_mother_filename": "A股每日市场监控_20260814_修正版.xlsx",
+    "fallback": "bootstrap template only when no validated registry exists"
   },
   "web_execution": {
-    "goal": "single artifact download + one mother workbook + one renderer command",
-    "command": "python renderer_runtime/run_excel_renderer_v14.py --template <mother.xlsx> --bundle-dir . --config renderer_runtime/excel_renderer.json --output A股每日市场监控_20260814.xlsx",
+    "goal": "single artifact download + one validated rolling mother + one renderer command",
+    "command": "python renderer_runtime/run_excel_renderer_v15.py --template <mother.xlsx> --bundle-dir . --config renderer_runtime/excel_renderer.json --output A股每日市场监控_20260814.xlsx",
     "forbid_free_rebuild": true,
-    "forbid_chart_recreation": true
+    "forbid_chart_recreation": true,
+    "innovation_turnover_proxy_forbidden": true
   },
   "files": {
     "payload": "daily_payload.json",
@@ -25,7 +28,8 @@
     "hot_stocks": "hot_stocks.csv",
     "innovation_history": "innovation_history_selected.csv",
     "sw_industry_latest": "sw_industry_latest.csv",
-    "renderer": "renderer_runtime/run_excel_renderer_v14.py",
+    "renderer": "renderer_runtime/run_excel_renderer_v15.py",
+    "renderer_base": "renderer_runtime/run_excel_renderer_v14.py",
     "renderer_core": "renderer_runtime/excel_renderer_artifact.py",
     "renderer_config": "renderer_runtime/excel_renderer.json"
   }

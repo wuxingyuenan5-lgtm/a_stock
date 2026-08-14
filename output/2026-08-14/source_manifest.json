@@ -23,10 +23,10 @@
     "innovation_history_ths": "data/history/innovation_drug_ths.csv"
   },
   "timings_seconds": {
-    "market_snapshot_s": 51.397,
-    "indices_s": 5.362,
-    "sw_analysis_s": 0.005,
-    "innovation_drug_s": 27.515,
-    "total_s": 84.323
+    "market_snapshot_s": 50.292,
+    "indices_s": 249.021,
+    "sw_analysis_s": 0.01,
+    "innovation_drug_s": 119.779,
+    "total_s": 419.16
   }
 }

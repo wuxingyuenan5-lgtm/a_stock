@@ -1,7 +1,8 @@
 {
-  "renderer_version": "1.4",
+  "renderer_version": "1.5",
   "mother_policy": {
     "mode": "rolling_previous_validated",
+    "registry": "data/latest_validated_workbook.json",
     "bootstrap_file_library_name": "A股每日市场监控_优化版_20260810.xlsx",
     "bootstrap_sha256": "8d02be03f928cacf082cbdaa4e56dbd0ef98969fa1f53f99b174a154d9a58869",
     "required_sheets": [
@@ -15,7 +16,7 @@
       "07_创新药交易拥挤度",
       "99_口径与质量"
     ],
-    "acceptance": "required sheets + chart invariants + validator; rolling mother is not rejected for hash drift"
+    "acceptance": "required sheets + chart invariants + validator; rolling mother is authoritative from latest_validated_workbook registry"
   },
   "bundle": {
     "required_files": [
@@ -28,6 +29,7 @@
       "render_bundle_manifest.json"
     ],
     "runtime_files": [
+      "renderer_runtime/run_excel_renderer_v15.py",
       "renderer_runtime/run_excel_renderer_v14.py",
       "renderer_runtime/excel_renderer_artifact.py",
       "renderer_runtime/excel_renderer.json"
@@ -52,7 +54,8 @@
       "chart_order": "date_asc",
       "source_sheet": "02_统一历史数据",
       "charts": ["上涨与下跌家数", "涨停与跌停家数", "市场宽度"],
-      "update_existing_charts_only": true
+      "update_existing_charts_only": true,
+      "title_must_show_latest_date": true
     },
     "04_百亿成交历史": {
       "matrix_header_row": 5,
@@ -84,10 +87,12 @@
       "header_row": 32,
       "first_data_row": 33,
       "order": "date_desc",
-      "history_rule": "single_source_only",
-      "preferred_chart_metric": "turnover",
-      "fallback_chart_metric": "volume_activity_20d",
-      "rewrite_from_selected_history": true,
+      "history_rule": "rolling_field_level_merge",
+      "amount_share_rule": "amount / same-day all-A denominator; fill recoverable blanks only",
+      "turnover_rule": "supplier_direct_board_turnover_only",
+      "activity_proxy": "retired",
+      "preserve_verified_historical_non_null": true,
+      "fallback_null_must_not_erase_history": true,
       "update_existing_charts_only": true
     },
     "99_口径与质量": {
@@ -119,14 +124,15 @@
     "same_date_rerun_preserve_verified_non_null_when_payload_null": true,
     "new_date_payload_null_remains_blank": true,
     "sw_missing_keeps_last_official_effective_date": true,
-    "innovation_source_change_requires_full_selected_history": true
+    "innovation_verified_history_survives_source_fallback": true,
+    "innovation_turnover_proxy_forbidden": true
   },
   "web_execution": {
     "preferred_mode": "single_bundle",
     "steps": [
       "read data/latest_bundle_pointer.json",
       "download one named workflow artifact",
-      "locate expected rolling mother workbook",
+      "read data/latest_validated_workbook.json as authoritative mother registry",
       "run bundled renderer once",
       "run validator once",
       "deliver xlsx"
