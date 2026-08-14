@@ -12,7 +12,11 @@ class IndexRetryTest(unittest.TestCase):
             "close": 3000.0, "return": 0.01, "amount_100m": 1000.0,
             "source": "standard", "status": "ok_primary_standard_index",
         }
-        with patch.object(production, "_index_record_from_hist", return_value=primary):
+
+        def hist_ok(*args, **kwargs):
+            return primary
+
+        with patch.object(production, "_index_record_from_hist", new=hist_ok):
             with patch.object(production, "fetch_indices_direct") as direct:
                 result = production.fetch_indices_resilient("2026-08-14", definitions)
         self.assertEqual(result[0]["status"], "ok_primary_standard_index")
@@ -25,8 +29,15 @@ class IndexRetryTest(unittest.TestCase):
             "close": 1200.0, "return": -0.01, "amount_100m": 200.0,
             "source": "bulk", "status": "ok_bulk_spot_fallback",
         }
-        with patch.object(production, "_index_record_from_hist", side_effect=RuntimeError("no hist")):
-            with patch.object(production, "_index_record_from_spot", return_value=spot):
+
+        def hist_fail(*args, **kwargs):
+            raise RuntimeError("no hist")
+
+        def spot_ok(*args, **kwargs):
+            return spot
+
+        with patch.object(production, "_index_record_from_hist", new=hist_fail):
+            with patch.object(production, "_index_record_from_spot", new=spot_ok):
                 with patch.object(production, "fetch_indices_direct") as direct:
                     result = production.fetch_indices_resilient("2026-08-14", definitions)
         self.assertEqual(result[0]["status"], "ok_bulk_spot_fallback")
@@ -45,8 +56,15 @@ class IndexRetryTest(unittest.TestCase):
             {"name": "A", "close": 1.0, "return": 0.01, "amount_100m": 10.0, "status": "ok"},
             {"name": "B", "close": 2.0, "return": 0.02, "amount_100m": 20.0, "status": "ok"},
         ]
-        with patch.object(production, "_index_record_from_hist", side_effect=RuntimeError("primary fail")):
-            with patch.object(production, "_index_record_from_spot", side_effect=RuntimeError("spot fail")):
+
+        def hist_fail(*args, **kwargs):
+            raise RuntimeError("primary fail")
+
+        def spot_fail(*args, **kwargs):
+            raise RuntimeError("spot fail")
+
+        with patch.object(production, "_index_record_from_hist", new=hist_fail):
+            with patch.object(production, "_index_record_from_spot", new=spot_fail):
                 with patch.object(production, "fetch_indices_direct", side_effect=[first, second]) as fetch:
                     with patch.object(production.time, "sleep"):
                         result = production.fetch_indices_resilient("2026-08-14", definitions)
