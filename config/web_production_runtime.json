@@ -1,24 +1,39 @@
 {
-  "runtime_version": "2.0",
+  "runtime_version": "2.1",
   "project": "A股每日市场监控",
   "repository": "wuxingyuenan5-lgtm/a_stock",
   "branch": "main",
   "timezone": "Asia/Shanghai",
   "entrypoint": {
     "latest_pointer": "data/latest_bundle_pointer.json",
+    "web_run_request": "ops/run_request.json",
+    "web_trigger_workflow": ".github/workflows/web_run_trigger.yml",
     "renderer": "run_excel_renderer.py",
     "renderer_version": "1.4",
     "renderer_config": "config/excel_renderer.json"
   },
   "web_daily_protocol": [
     "读取本文件，不再自行搜索或重新理解生产规则",
-    "读取 data/latest_bundle_pointer.json 并确认 target_date 与当天任务一致",
+    "读取 data/latest_bundle_pointer.json；若不存在或日期不是目标交易日，则更新 ops/run_request.json 触发官方 daily_market_monitor workflow",
+    "等待 latest pointer 更新到目标交易日，并确认对应 workflow run 已完成",
     "仅下载 pointer 指向的一个 GitHub Actions artifact",
     "按 expected_mother_filename 定位上一交易日已验证工作簿；优先当前聊天附件，其次 File Library",
     "若无法取得母表原始 xlsx 二进制，立即停止并要求用户附加该文件；禁止自由重建",
     "直接运行 artifact 内自带 renderer_runtime，一次渲染",
     "读取 renderer_validation；FAIL 不交付，PASS/WARN 才交付"
   ],
+  "trigger_policy": {
+    "mode": "git_push_bridge_to_workflow_dispatch",
+    "request_file": "ops/run_request.json",
+    "request_schema": {
+      "target_date": "YYYY-MM-DD",
+      "requested_by": "web_chat",
+      "request_id": "unique string"
+    },
+    "workflow": ".github/workflows/web_run_trigger.yml",
+    "dispatch_target": "daily_market_monitor.yml",
+    "never_use_request_file_as_business_data": true
+  },
   "mother_policy": {
     "mode": "rolling_previous_validated",
     "bootstrap_only": "A股每日市场监控_优化版_20260810.xlsx",
@@ -48,7 +63,7 @@
     "slow_shenwan_full_history_refresh_not_in_critical_path": true
   },
   "hard_stop_conditions": [
-    "pointer missing or target date mismatch",
+    "web trigger fails or latest pointer still not target date after official workflow completes",
     "artifact missing required files",
     "mother workbook unavailable as raw xlsx",
     "mother workbook required sheets/chart invariants fail",
