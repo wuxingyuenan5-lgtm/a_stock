@@ -1,11 +1,12 @@
 {
-  "runtime_version": "2.1",
+  "runtime_version": "2.2",
   "project": "A股每日市场监控",
   "repository": "wuxingyuenan5-lgtm/a_stock",
   "branch": "main",
   "timezone": "Asia/Shanghai",
   "entrypoint": {
     "latest_pointer": "data/latest_bundle_pointer.json",
+    "latest_validated_workbook": "data/latest_validated_workbook.json",
     "web_run_request": "ops/run_request.json",
     "web_trigger_workflow": ".github/workflows/web_run_trigger.yml",
     "renderer": "run_excel_renderer.py",
@@ -17,10 +18,12 @@
     "读取 data/latest_bundle_pointer.json；若不存在或日期不是目标交易日，则更新 ops/run_request.json 触发官方 daily_market_monitor workflow",
     "等待 latest pointer 更新到目标交易日，并确认对应 workflow run 已完成",
     "仅下载 pointer 指向的一个 GitHub Actions artifact",
-    "按 expected_mother_filename 定位上一交易日已验证工作簿；优先当前聊天附件，其次 File Library",
+    "读取 data/latest_validated_workbook.json；该文件是滚动母表日期/文件名/SHA的权威来源，bundle/pointer中的expected_mother仅作辅助提示",
+    "按 latest_validated_workbook.filename 定位上一份正式验证工作簿；优先当前聊天附件，其次 File Library",
     "若无法取得母表原始 xlsx 二进制，立即停止并要求用户附加该文件；禁止自由重建",
     "直接运行 artifact 内自带 renderer_runtime，一次渲染",
-    "读取 renderer_validation；FAIL 不交付，PASS/WARN 才交付"
+    "读取 renderer_validation；FAIL 不交付，PASS/WARN 才交付",
+    "交付成功后更新 data/latest_validated_workbook.json，使今日正式输出成为下一交易日滚动母表"
   ],
   "trigger_policy": {
     "mode": "git_push_bridge_to_workflow_dispatch",
@@ -36,16 +39,19 @@
   },
   "mother_policy": {
     "mode": "rolling_previous_validated",
+    "registry": "data/latest_validated_workbook.json",
+    "registry_is_authoritative": true,
     "bootstrap_only": "A股每日市场监控_优化版_20260810.xlsx",
     "never_rebuild_from_scratch": true,
-    "never_use_older_mother_when_expected_previous_workbook_exists": true,
+    "never_use_older_mother_when_validated_registry_has_newer_workbook": true,
     "next_day_mother": "today_successful_output"
   },
   "chart_policy": {
     "update_existing_objects_only": true,
     "forbid_delete_all_drawings": true,
     "forbid_new_charts": true,
-    "must_preserve_chart_counts_anchors_and_series_identities": true
+    "must_preserve_chart_counts_anchors_and_series_counts": true,
+    "series_label_may_change_only_when_configured_metric_fallback_changes": true
   },
   "data_policy": {
     "renderer_never_calls_market_api": true,
@@ -68,8 +74,8 @@
     "mother workbook unavailable as raw xlsx",
     "mother workbook required sheets/chart invariants fail",
     "payload validation FAIL",
-    "renderer validation FAIL",
-    "chart structure changed",
+    "renderer validation FAIL after applying configured metric-fallback chart-label rule",
+    "chart count/anchor/series-count structure changed",
     "formula error scan fails"
   ],
   "expected_user_command": "生成今天的A股每日市场监控"
