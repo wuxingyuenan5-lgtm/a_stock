@@ -32,7 +32,13 @@ def promote_candidate(
     validation: dict[str, object],
 ) -> dict[str, object]:
     if str(validation.get("status") or "").upper() == "FAIL":
-        raise RuntimeError("canonical validation failed; live history not modified")
+        failures = [str(item) for item in (validation.get("failures") or [])]
+        detail = "; ".join(failures[:20]) or "unspecified failure"
+        if len(failures) > 20:
+            detail += f"; ... +{len(failures) - 20} more"
+        raise RuntimeError(
+            "canonical validation failed; live history not modified: " + detail
+        )
 
     stage_root = stage_root.resolve()
     canonical_root = canonical_root.resolve()
