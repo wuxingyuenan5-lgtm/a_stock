@@ -30,11 +30,10 @@ class ReportDataContractTest(unittest.TestCase):
                 {"rank": 1, "stock_code": "000001", "stock_name": "A", "close": 10, "return": 0.01, "amount_100m": 140, "sw_level1": "电子", "sw_level2": "半导体"},
                 {"rank": 2, "stock_code": "000002", "stock_name": "B", "close": 20, "return": -0.01, "amount_100m": 110, "sw_level1": "通信", "sw_level2": "通信设备"},
             ],
-            "sw_crowding": {"date": "2026-08-13", "targets": {}, "combined": {}},
-            "innovation_drug": {"date": "2026-08-14", "amount_100m": 1037.27, "amount_share_of_a": 0.0484, "turnover": 0.0438, "return": -0.0054},
         }
         (out / "daily_payload.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         (out / "validation.json").write_text(json.dumps({"date": "2026-08-14", "status": "PASS", "checks": []}, ensure_ascii=False), encoding="utf-8")
+        (out / "canonical_validation.json").write_text(json.dumps({"target_date":"2026-08-14","status":"PASS","failures":[],"warnings":[],"tables":{}}, ensure_ascii=False), encoding="utf-8")
 
         self._csv(root / "data/history/market_core.csv", ["date","advance","decline","flat","limit_up","limit_down","effective_stocks","total_amount_100m","hot_count","hot_amount_100m","hot_concentration","market_breadth"], [
             {"date":"2026-08-13","advance":1087,"decline":4166,"flat":77,"limit_up":59,"limit_down":4,"effective_stocks":5330,"total_amount_100m":25484.5,"hot_count":23,"hot_amount_100m":3365.68,"hot_concentration":0.132,"market_breadth":-0.5861},
@@ -94,6 +93,18 @@ class ReportDataContractTest(unittest.TestCase):
             self.assertNotIn("activity", latest)
             self.assertAlmostEqual(latest["amount_share_of_a"], 1037.27030799 / 21415.4, places=8)
             self.assertEqual(latest["turnover"], 0.0438)
+
+    def test_report_data_business_values_do_not_require_raw_daily_payload(self):
+        from build_report_data import build_report_data
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            self._fixture(root)
+            (root / "output/2026-08-14/daily_payload.json").unlink()
+            (root / "output/2026-08-14/validation.json").unlink()
+            report = build_report_data("2026-08-14", root)
+            self.assertEqual(report["market_history"][-1]["hot_count"], 2)
+            self.assertEqual(len(report["hot_stocks_latest"]), 2)
+            self.assertEqual(report["meta"]["canonical_validation_status"], "PASS")
 
 
 if __name__ == "__main__":
