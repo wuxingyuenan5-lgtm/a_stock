@@ -10,6 +10,8 @@ from .collectors import fetch_eastmoney_index, _fetch_em_klines
 INDEX_NAMES = ("上证50", "Choice微盘", "中证全指")
 INDEX_FIELDS = ("date", "name", "code", "close", "return", "amount_100m", "source", "status")
 MAX_SPARSE_FALLBACK_DATES = 5
+MARKET_CORE_FILE = "market_core.csv"
+MARKET_VERIFIED_BACKFILL_FILE = "market_core_verified_backfill.csv"
 
 
 def _float(value):
@@ -26,6 +28,24 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return []
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def read_market_core_rows(root: Path) -> list[dict[str, str]]:
+    """Return canonical market-core history with explicit verified migration rows overlaid.
+
+    The base CSV remains the day-to-day append target. A small verified-backfill file
+    records historical rows recovered from previously validated official workbooks.
+    Backfill rows intentionally win by date, which keeps provenance explicit and avoids
+    silently rewriting the long base history during migration.
+    """
+    history_dir = root / "data" / "history"
+    merged: dict[str, dict[str, str]] = {}
+    for filename in (MARKET_CORE_FILE, MARKET_VERIFIED_BACKFILL_FILE):
+        for row in _read_csv(history_dir / filename):
+            d = str(row.get("date") or "")[:10]
+            if d:
+                merged[d] = dict(row)
+    return [merged[d] for d in sorted(merged)]
 
 
 def read_index_history(path: Path) -> list[dict[str, object]]:
@@ -125,9 +145,9 @@ def backfill_index_range(start_date: str, end_date: str, definitions: list[dict[
     return rows
 
 
-def _market_amount_dates(path: Path) -> set[str]:
+def _market_amount_dates(rows: list[dict[str, str]]) -> set[str]:
     out = set()
-    for row in _read_csv(path):
+    for row in rows:
         d = str(row.get("date") or "")[:10]
         if d and _float(row.get("total_amount_100m")) is not None:
             out.add(d)
@@ -146,7 +166,7 @@ def _innovation_amount_dates(path: Path, report_date: str) -> set[str]:
 
 def scan_history_gaps(root: Path, report_date: str, required_index_dates: list[str] | None = None) -> dict[str, object]:
     history_dir = root / "data" / "history"
-    market_rows = _read_csv(history_dir / "market_core.csv")
+    market_rows = read_market_core_rows(root)
     market_dates = [str(r.get("date") or "")[:10] for r in market_rows if r.get("date") and str(r.get("date"))[:10] <= report_date]
     dates_to_scan = required_index_dates if required_index_dates is not None else market_dates
     index_rows = read_index_history(history_dir / "indices_history.csv")
@@ -160,7 +180,7 @@ def scan_history_gaps(root: Path, report_date: str, required_index_dates: list[s
                 index_gaps.append({"date": d, "name": name, "fields": missing})
     denominator_gaps = sorted(
         _innovation_amount_dates(history_dir / "innovation_drug_eastmoney.csv", report_date)
-        - _market_amount_dates(history_dir / "market_core.csv")
+        - _market_amount_dates(market_rows)
     )
     return {"report_date": report_date, "indices": index_gaps, "market_denominator_dates": denominator_gaps}
 
