@@ -116,6 +116,7 @@ def audit_table(path: Path, spec: TableSpec) -> dict[str, object]:
     dates = [str(row.get(spec.date_field) or "")[:10] for row in rows if row.get(spec.date_field)]
     return {
         "row_count": len(rows),
+        "unique_key_count": len(seen),
         "latest_date": max(dates, default=None),
         "duplicate_key_count": duplicate_count,
         "sha256": file_sha256(path) if path.exists() else None,
