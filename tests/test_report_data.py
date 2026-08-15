@@ -76,11 +76,12 @@ class ReportDataContractTest(unittest.TestCase):
             self.assertEqual(report["meta"]["report_date"], "2026-08-14")
             self.assertEqual(set(report), {
                 "meta", "market_history", "indices_history", "sw_industry_latest",
-                "hot_stock_matrix", "hot_stocks_latest", "sw_crowding_history",
+                "hot_stock_matrix", "hot_stocks_history", "hot_stocks_latest", "sw_crowding_history",
                 "innovation_history", "quality",
             })
             self.assertEqual(len(report["hot_stocks_latest"]), 2)
-            self.assertEqual(report["hot_stock_matrix"]["dates"][-1], "2026-08-14")
+            self.assertEqual(len(report["hot_stocks_history"]), 2)
+            self.assertEqual(report["hot_stock_matrix"]["dates"][0], "2026-08-14")
 
     def test_innovation_contract_has_no_activity_proxy_and_share_uses_same_day_denominator(self):
         from build_report_data import build_report_data
