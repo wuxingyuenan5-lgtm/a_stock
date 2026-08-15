@@ -23,24 +23,34 @@ class ProductionV2ContractTest(unittest.TestCase):
         self.assertEqual(cfg["innovation_turnover_rule"], "supplier_direct_only")
         self.assertEqual(cfg["activity_proxy"], "retired")
 
-    def test_daily_workflow_runs_html_pipeline_in_required_order(self):
+    def test_daily_workflow_runs_canonical_html_pipeline_in_required_order(self):
         text = (ROOT / ".github" / "workflows" / "daily_market_monitor.yml").read_text(encoding="utf-8")
-        self.assertIn("update_sw_industry_fast.py", text)
-        self.assertIn("Full unit tests on code review only", text)
-        self.assertIn("run_history_preflight.py", text)
-        self.assertIn("build_report_data.py", text)
-        self.assertIn("render_market_monitor_html.py", text)
-        self.assertIn("validate_market_monitor_html.py", text)
-        self.assertIn("config/html_production_runtime.json", text)
-        preflight = text.index("- name: History preflight and recoverable backfill")
-        collect = text.index("- name: Produce normalized payload")
-        report = text.index("- name: Build normalized report data")
-        render = text.index("- name: Render offline HTML")
-        validate = text.index("- name: Validate HTML")
-        self.assertLess(preflight, collect)
-        self.assertLess(collect, report)
-        self.assertLess(report, render)
-        self.assertLess(render, validate)
+        for required in (
+            "Full unit tests on code review only",
+            "run_history_preflight.py",
+            "run_daily.py",
+            "validate_canonical_data.py",
+            "build_report_data.py",
+            "render_market_monitor_html.py",
+            "validate_market_monitor_html.py",
+            "config/html_production_runtime.json",
+        ):
+            self.assertIn(required, text)
+
+        names = [
+            "History preflight and recoverable backfill",
+            "Produce normalized payload",
+            "Validate Canonical data",
+            "Build normalized report data",
+            "Render offline HTML",
+            "Validate HTML",
+        ]
+        positions = [text.index(f"- name: {name}") for name in names]
+        self.assertEqual(positions, sorted(positions))
+
+        self.assertNotIn("- name: Refresh Shenwan crowding cache once", text)
+        self.assertNotIn("- name: Refresh Shenwan industry snapshot", text)
+        self.assertIn("--full-refresh-sw-industry", text)
 
     def test_excel_renderer_remains_chart_preserving_v15(self):
         entry = (ROOT / "run_excel_renderer.py").read_text(encoding="utf-8")
