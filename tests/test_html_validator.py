@@ -15,7 +15,7 @@ class HtmlValidatorContractTest(unittest.TestCase):
             ],
             "indices_history":[],
             "sw_industry_latest":[],
-            "hot_stock_matrix":{"dates":["2026-08-13","2026-08-14"],"rows":[{"industry":"半导体","counts":[23,2],"history_total":25}]},
+            "hot_stock_matrix":{"dates":["2026-08-14","2026-08-13"],"rows":[{"industry":"半导体","counts":[2,23],"history_total":25}]},
             "hot_stocks_latest":[
                 {"date":"2026-08-14","rank":1,"stock_code":"000001","stock_name":"A","close":10,"return":0.01,"amount_100m":130,"sw_level1":"电子","sw_level2":"半导体"},
                 {"date":"2026-08-14","rank":2,"stock_code":"000002","stock_name":"B","close":20,"return":-0.01,"amount_100m":120,"sw_level1":"电子","sw_level2":"半导体"},
