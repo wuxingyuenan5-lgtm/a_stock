@@ -7,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from market_monitor.production import run
+from market_monitor.history_preflight import append_index_history
 
 
 def default_date() -> str:
@@ -30,6 +31,11 @@ def main() -> None:
             "use the historical backfill workflow for older dates"
         )
     result = run(target_date=args.target_date, config_path=Path(args.config), refresh_mapping=args.refresh_mapping)
+    payload = result["payload"]
+    append_index_history(
+        Path("data/history/indices_history.csv"),
+        list((payload.get("indices") or {}).values()),
+    )
     validation = result["validation"]
     print(f"completed date={args.target_date} status={validation['status']} output={result['output_dir']}")
 
