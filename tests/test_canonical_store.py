@@ -5,7 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from market_monitor.canonical_store import TableSpec, audit_table, diff_history
+from market_monitor.canonical_store import (
+    TableSpec,
+    audit_table,
+    diff_history,
+    normalize_identical_duplicates,
+)
 
 
 class CanonicalStoreTest(unittest.TestCase):
@@ -30,6 +35,24 @@ class CanonicalStoreTest(unittest.TestCase):
             self.assertEqual(audit["latest_date"], "2026-08-14")
             self.assertEqual(audit["duplicate_key_count"], 1)
             self.assertEqual(len(audit["sha256"]), 64)
+
+    def test_exact_duplicate_key_rows_are_removed_but_conflicts_remain(self):
+        with TemporaryDirectory() as td:
+            path = Path(td) / "sw.csv"
+            self._write(path, [
+                {"date":"2026-08-04","code":"801995","turnover":"4.14"},
+                {"date":"2026-08-04","code":"801995","turnover":"4.14"},
+                {"date":"2026-08-04","code":"801102","turnover":"7.60"},
+                {"date":"2026-08-04","code":"801102","turnover":"7.61"},
+            ])
+            spec = TableSpec("sw", "x.csv", ("date","code"), "date")
+            result = normalize_identical_duplicates(path, spec)
+            rows = list(csv.DictReader(path.open("r", encoding="utf-8-sig", newline="")))
+            self.assertEqual(result["removed_identical_rows"], 1)
+            self.assertEqual(result["conflicting_duplicate_keys"], [["2026-08-04", "801102"]])
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(sum(1 for row in rows if row["code"] == "801995"), 1)
+            self.assertEqual(sum(1 for row in rows if row["code"] == "801102"), 2)
 
     def test_diff_history_flags_only_pre_target_changes(self):
         spec = TableSpec("market", "x.csv", ("date",), "date")
