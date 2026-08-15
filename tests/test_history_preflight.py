@@ -94,6 +94,28 @@ class HistoryPreflightContractTest(unittest.TestCase):
             self.assertEqual(calls[0][0:2], ("2026-08-10","2026-08-14"))
             self.assertEqual(result["after"]["indices"], [])
 
+    def test_bulk_failure_caps_sparse_fallback_to_five_latest_dates(self):
+        import market_monitor.history_preflight as hp
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            dates = [f"2026-07-{day:02d}" for day in range(20, 32)] + [f"2026-08-{day:02d}" for day in range(1, 15)]
+            self._write_csv(root / "data/history/market_core.csv", ["date","total_amount_100m"], [{"date":d,"total_amount_100m":1} for d in dates])
+            definitions=[{"name":"上证50","secid":"1.000016"},{"name":"Choice微盘","secid":"47.800007"},{"name":"中证全指","secid":"1.000985"}]
+            sparse_dates=[]
+            old_range, old_date = hp.backfill_index_range, hp.backfill_index_date
+            try:
+                hp.backfill_index_range = lambda *args, **kwargs: []
+                def fake_date(d, defs):
+                    sparse_dates.append(d)
+                    return []
+                hp.backfill_index_date = fake_date
+                hp.preflight_history(root, "2026-08-14", definitions, repair_indices=True)
+            finally:
+                hp.backfill_index_range, hp.backfill_index_date = old_range, old_date
+            self.assertLessEqual(len(set(sparse_dates)), 5)
+            self.assertIn("2026-08-14", sparse_dates)
+            self.assertIn("2026-08-13", sparse_dates)
+
 
 if __name__ == "__main__":
     unittest.main()
