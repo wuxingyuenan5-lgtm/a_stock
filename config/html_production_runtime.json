@@ -4,9 +4,12 @@
   "primary_format": "html",
   "offline_single_file": true,
   "requires_excel_mother": false,
+  "data_layer": "canonical_v2",
+  "raw_direct_render_forbidden": true,
   "data_contract": "report_data.json",
   "renderer": "render_market_monitor_html.py",
   "validator": "validate_market_monitor_html.py",
+  "canonical_validator": "validate_canonical_data.py",
   "history_preflight": "run_history_preflight.py",
   "innovation_turnover_rule": "supplier_direct_only",
   "activity_proxy": "retired",
@@ -17,18 +20,33 @@
     "historical_indices_use_historical_klines_only": true,
     "unrecoverable_same_definition_gap_is_warn": true
   },
+  "canonical_policy": {
+    "raw_collection_writes_stage_only": true,
+    "promotion_requires_no_hard_failures": true,
+    "exact_duplicate_rows_may_be_normalized": true,
+    "conflicting_duplicate_keys_fail": true,
+    "history_loss_checked_by_unique_business_keys": true,
+    "historical_mutations_are_audited": true
+  },
   "web_execution": {
     "single_artifact_download": true,
     "steps": [
       "read data/latest_bundle_pointer.json",
       "download the named HTML production artifact",
       "open A股每日市场监控_YYYYMMDD.html",
-      "use html_validation.json for acceptance"
+      "use canonical_validation.json and html_validation.json for acceptance"
     ]
   },
   "artifact": {
     "name_pattern": "a-share-monitor-html-YYYY-MM-DD",
     "primary_file_pattern": "A股每日市场监控_YYYYMMDD.html",
-    "required_companions": ["report_data.json", "html_validation.json", "source_manifest.json", "history_preflight.json"]
+    "required_companions": [
+      "report_data.json",
+      "canonical_manifest.json",
+      "canonical_validation.json",
+      "html_validation.json",
+      "source_manifest.json",
+      "history_preflight.json"
+    ]
   }
 }
