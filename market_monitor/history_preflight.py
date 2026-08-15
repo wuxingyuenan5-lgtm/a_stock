@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Iterable
 
-from .collectors import fetch_eastmoney_index
+from .collectors import fetch_eastmoney_index, _fetch_em_klines
 
 
 INDEX_NAMES = ("上证50", "Choice微盘", "中证全指")
@@ -45,28 +45,28 @@ def read_index_history(path: Path) -> list[dict[str, object]]:
 
 
 def append_index_history(path: Path, records: Iterable[dict[str, object]]) -> list[dict[str, object]]:
-    """Upsert index history by (date, name) without letting null reruns erase verified values."""
+    """Upsert by (date,name); null reruns may never erase verified non-null history."""
     path.parent.mkdir(parents=True, exist_ok=True)
     merged = {(str(r["date"]), str(r["name"])): dict(r) for r in read_index_history(path)}
     for incoming in records:
-        date = str(incoming.get("date") or "")
+        d = str(incoming.get("date") or "")
         name = str(incoming.get("name") or "")
-        if not date or not name:
+        if not d or not name:
             continue
-        key = (date, name)
+        key = (d, name)
         current = merged.get(key, {
-            "date": date, "name": name, "code": str(incoming.get("code") or ""),
+            "date": d, "name": name, "code": str(incoming.get("code") or ""),
             "close": None, "return": None, "amount_100m": None, "source": "", "status": "",
         })
-        any_numeric_update = False
+        updated = False
         for field in ("close", "return", "amount_100m"):
             value = _float(incoming.get(field))
             if value is not None:
                 current[field] = value
-                any_numeric_update = True
+                updated = True
         if incoming.get("code") not in (None, ""):
             current["code"] = str(incoming.get("code"))
-        if any_numeric_update:
+        if updated:
             current["source"] = str(incoming.get("source") or current.get("source") or "")
             current["status"] = str(incoming.get("status") or current.get("status") or "ok")
         elif key not in merged:
@@ -83,21 +83,43 @@ def append_index_history(path: Path, records: Iterable[dict[str, object]]) -> li
 
 
 def backfill_index_date(target_date: str, definitions: list[dict[str, str]]) -> list[dict[str, object]]:
-    """Historical repair path. Intentionally calls only the historical K-line fetcher."""
+    """Sparse historical repair. Uses the historical K-line fetcher only."""
     rows = []
     for item in definitions:
         try:
             rows.append(fetch_eastmoney_index(target_date, item["secid"], item["name"]))
         except Exception as exc:
             rows.append({
-                "date": target_date,
-                "name": item["name"],
-                "code": item["secid"],
-                "close": None,
-                "return": None,
-                "amount_100m": None,
-                "source": "东方财富历史K线直连",
-                "status": f"error: {exc}",
+                "date": target_date, "name": item["name"], "code": item["secid"],
+                "close": None, "return": None, "amount_100m": None,
+                "source": "东方财富历史K线直连", "status": f"error: {exc}",
+            })
+    return rows
+
+
+def backfill_index_range(start_date: str, end_date: str, definitions: list[dict[str, str]]) -> list[dict[str, object]]:
+    """Bulk historical bootstrap: exactly one bounded K-line range request per index."""
+    beg, end = start_date.replace("-", ""), end_date.replace("-", "")
+    rows: list[dict[str, object]] = []
+    for item in definitions:
+        try:
+            raw_rows = _fetch_em_klines(item["secid"], beg, end, lmt=1000)
+            for values in raw_rows:
+                rows.append({
+                    "date": values[0],
+                    "name": item["name"],
+                    "code": item["secid"],
+                    "close": float(values[2]),
+                    "return": float(values[8]) / 100,
+                    "amount_100m": float(values[6]) / 1e8,
+                    "source": "东方财富历史K线批量直连",
+                    "status": "ok_bulk_history",
+                })
+        except Exception as exc:
+            rows.append({
+                "date": end_date, "name": item["name"], "code": item["secid"],
+                "close": None, "return": None, "amount_100m": None,
+                "source": "东方财富历史K线批量直连", "status": f"error: {exc}",
             })
     return rows
 
@@ -121,49 +143,40 @@ def _innovation_amount_dates(path: Path, report_date: str) -> set[str]:
     return out
 
 
-def scan_history_gaps(
-    root: Path,
-    report_date: str,
-    required_index_dates: list[str] | None = None,
-) -> dict[str, object]:
+def scan_history_gaps(root: Path, report_date: str, required_index_dates: list[str] | None = None) -> dict[str, object]:
     history_dir = root / "data" / "history"
     market_rows = _read_csv(history_dir / "market_core.csv")
     market_dates = [str(r.get("date") or "")[:10] for r in market_rows if r.get("date") and str(r.get("date"))[:10] <= report_date]
     dates_to_scan = required_index_dates if required_index_dates is not None else market_dates
-
     index_rows = read_index_history(history_dir / "indices_history.csv")
     by_key = {(str(r["date"]), str(r["name"])): r for r in index_rows}
     index_gaps = []
     for d in dates_to_scan:
         for name in INDEX_NAMES:
             row = by_key.get((d, name))
-            missing_fields = [field for field in ("close", "return", "amount_100m") if not row or row.get(field) is None]
-            if missing_fields:
-                index_gaps.append({"date": d, "name": name, "fields": missing_fields})
-
-    market_amount_dates = _market_amount_dates(history_dir / "market_core.csv")
-    innovation_dates = _innovation_amount_dates(history_dir / "innovation_drug_eastmoney.csv", report_date)
-    denominator_gaps = sorted(innovation_dates - market_amount_dates)
-    return {
-        "report_date": report_date,
-        "indices": index_gaps,
-        "market_denominator_dates": denominator_gaps,
-    }
+            missing = [field for field in ("close", "return", "amount_100m") if not row or row.get(field) is None]
+            if missing:
+                index_gaps.append({"date": d, "name": name, "fields": missing})
+    denominator_gaps = sorted(
+        _innovation_amount_dates(history_dir / "innovation_drug_eastmoney.csv", report_date)
+        - _market_amount_dates(history_dir / "market_core.csv")
+    )
+    return {"report_date": report_date, "indices": index_gaps, "market_denominator_dates": denominator_gaps}
 
 
-def preflight_history(
-    root: Path,
-    report_date: str,
-    definitions: list[dict[str, str]],
-    repair_indices: bool = True,
-) -> dict[str, object]:
-    """Scan local history and repair recoverable historical index gaps only."""
+def preflight_history(root: Path, report_date: str, definitions: list[dict[str, str]], repair_indices: bool = True) -> dict[str, object]:
+    """Scan history, bulk-bootstrap large index gaps, then use sparse date repairs."""
     before = scan_history_gaps(root, report_date)
-    if repair_indices:
+    path = root / "data" / "history" / "indices_history.csv"
+    if repair_indices and before["indices"]:
         missing_dates = sorted({item["date"] for item in before["indices"]})
-        path = root / "data" / "history" / "indices_history.csv"
-        for d in missing_dates:
-            missing_names = {item["name"] for item in before["indices"] if item["date"] == d}
+        # Many missing dates are a bootstrap/migration problem. One range request per
+        # index is dramatically faster and more reliable than date×index requests.
+        if len(missing_dates) >= 4:
+            append_index_history(path, backfill_index_range(missing_dates[0], missing_dates[-1], definitions))
+        middle = scan_history_gaps(root, report_date)
+        for d in sorted({item["date"] for item in middle["indices"]}):
+            missing_names = {item["name"] for item in middle["indices"] if item["date"] == d}
             defs = [item for item in definitions if item["name"] in missing_names]
             if defs:
                 append_index_history(path, backfill_index_date(d, defs))
