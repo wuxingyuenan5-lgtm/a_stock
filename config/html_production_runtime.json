@@ -1,5 +1,6 @@
 {
   "runtime_version": "1.0",
+  "html_version": "1.1",
   "report_name": "A股每日市场监控",
   "primary_format": "html",
   "offline_single_file": true,
@@ -11,6 +12,12 @@
   "validator": "validate_market_monitor_html.py",
   "canonical_validator": "validate_canonical_data.py",
   "history_preflight": "run_history_preflight.py",
+  "time_slider_default": "full_history",
+  "hot_matrix_default_dates": 10,
+  "hot_matrix_order": "newest_left",
+  "sw_sort_cycle": ["original", "desc", "asc", "original"],
+  "share_chart_kind": "area",
+  "turnover_chart_kind": "line",
   "innovation_turnover_rule": "supplier_direct_only",
   "activity_proxy": "retired",
   "missing_data_policy": {
@@ -27,6 +34,16 @@
     "conflicting_duplicate_keys_fail": true,
     "history_loss_checked_by_unique_business_keys": true,
     "historical_mutations_are_audited": true
+  },
+  "html_interaction_policy": {
+    "all_time_charts_have_range_controls": true,
+    "range_controls_default_to_full_history": true,
+    "range_change_recalculates_visible_axes": true,
+    "legends_identify_each_series": true,
+    "tooltip_requires_date_metric_value_unit": true,
+    "sw_three_state_sorting": true,
+    "four_industry_combined_amount_presentation": "forbidden",
+    "innovation_activity_proxy": "forbidden"
   },
   "web_execution": {
     "single_artifact_download": true,
