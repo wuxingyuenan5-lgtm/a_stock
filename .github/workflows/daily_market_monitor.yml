@@ -37,6 +37,7 @@ on:
       - config/excel_renderer.json
       - config/web_production_runtime.json
       - config/html_production_runtime.json
+      - data/history/hot_stocks.csv
       - requirements.txt
       - .github/workflows/daily_market_monitor.yml
 
@@ -93,6 +94,34 @@ jobs:
       - name: Full unit tests on code review only
         if: github.event_name == 'pull_request'
         run: python -m unittest discover -s tests -v
+
+      - name: Build 2026-08-14 HTML acceptance prototype on PR
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          python run_history_preflight.py --target-date "2026-08-14"
+          python build_report_data.py --target-date "2026-08-14"
+          python render_market_monitor_html.py \
+            --input "output/2026-08-14/report_data.json" \
+            --output "output/2026-08-14/A股每日市场监控_20260814.html"
+          python validate_market_monitor_html.py \
+            --data "output/2026-08-14/report_data.json" \
+            --html "output/2026-08-14/A股每日市场监控_20260814.html" \
+            --output "output/2026-08-14/html_validation.json"
+
+      - name: Upload 2026-08-14 HTML acceptance prototype
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-prototype-2026-08-14
+          path: |
+            output/2026-08-14/A股每日市场监控_20260814.html
+            output/2026-08-14/report_data.json
+            output/2026-08-14/html_validation.json
+            output/2026-08-14/history_preflight.json
+            data/history/indices_history.csv
+          if-no-files-found: error
+          retention-days: 14
 
       - name: History preflight and recoverable backfill
         if: github.event_name != 'pull_request'
@@ -156,7 +185,6 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
-
           d = "${{ steps.date.outputs.value }}"
           compact = "${{ steps.date.outputs.compact }}"
           validation = json.loads(Path(f"output/{d}/html_validation.json").read_text(encoding="utf-8"))
@@ -171,9 +199,7 @@ jobs:
               "runtime_manifest": "config/html_production_runtime.json",
               "workflow": "daily_market_monitor.yml"
           }
-          Path("data/latest_bundle_pointer.json").write_text(
-              json.dumps(pointer, ensure_ascii=False, indent=2), encoding="utf-8"
-          )
+          Path("data/latest_bundle_pointer.json").write_text(json.dumps(pointer, ensure_ascii=False, indent=2), encoding="utf-8")
           print(json.dumps(pointer, ensure_ascii=False))
           PY
 
