@@ -1,0 +1,34 @@
+{
+  "runtime_version": "1.0",
+  "report_name": "A股每日市场监控",
+  "primary_format": "html",
+  "offline_single_file": true,
+  "requires_excel_mother": false,
+  "data_contract": "report_data.json",
+  "renderer": "render_market_monitor_html.py",
+  "validator": "validate_market_monitor_html.py",
+  "history_preflight": "run_history_preflight.py",
+  "innovation_turnover_rule": "supplier_direct_only",
+  "activity_proxy": "retired",
+  "missing_data_policy": {
+    "never_zero_fill": true,
+    "never_use_proxy_for_turnover": true,
+    "never_erase_verified_non_null_with_null": true,
+    "historical_indices_use_historical_klines_only": true,
+    "unrecoverable_same_definition_gap_is_warn": true
+  },
+  "web_execution": {
+    "single_artifact_download": true,
+    "steps": [
+      "read data/latest_bundle_pointer.json",
+      "download the named HTML production artifact",
+      "open A股每日市场监控_YYYYMMDD.html",
+      "use html_validation.json for acceptance"
+    ]
+  },
+  "artifact": {
+    "name_pattern": "a-share-monitor-html-YYYY-MM-DD",
+    "primary_file_pattern": "A股每日市场监控_YYYYMMDD.html",
+    "required_companions": ["report_data.json", "html_validation.json", "source_manifest.json", "history_preflight.json"]
+  }
+}
