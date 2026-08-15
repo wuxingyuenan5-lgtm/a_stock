@@ -47,9 +47,13 @@ def append_hot_stock_history(path: Path, target_date: str, rows: Iterable[dict[s
         d, code = str(row.get("date") or ""), str(row.get("stock_code") or "").zfill(6)
         if d and code:
             merged[(d, code)] = {
-                "date": d, "rank": _int(row.get("rank")), "stock_code": code,
-                "stock_name": str(row.get("stock_name") or ""), "close": _num(row.get("close")),
-                "return": _num(row.get("return")), "amount_100m": _num(row.get("amount_100m")),
+                "date": d,
+                "rank": _int(row.get("rank")),
+                "stock_code": code,
+                "stock_name": str(row.get("stock_name") or ""),
+                "close": _num(row.get("close")),
+                "return": _num(row.get("return")),
+                "amount_100m": _num(row.get("amount_100m")),
                 "sw_level1": str(row.get("sw_level1") or "未匹配"),
                 "sw_level2": str(row.get("sw_level2") or "未匹配"),
             }
@@ -129,11 +133,21 @@ def _hot_rows(path: Path, target_date: str) -> list[dict[str, object]]:
             "sw_level1": str(raw.get("sw_level1") or "未匹配"),
             "sw_level2": str(raw.get("sw_level2") or "未匹配"),
         })
-    return sorted(rows, key=lambda row: (row["date"], row["rank"] if row["rank"] is not None else 9999))
+    return sorted(
+        rows,
+        key=lambda row: (row["date"], row["rank"] if row["rank"] is not None else 9999),
+    )
 
 
-def build_hot_stock_matrix(rows: list[dict[str, object]], recent_dates: int = 6, named_max: int = 13) -> dict[str, object]:
+def build_hot_stock_matrix(
+    rows: list[dict[str, object]],
+    recent_dates: int = 10,
+    named_max: int = 13,
+    newest_first: bool = True,
+) -> dict[str, object]:
     dates = sorted({str(row["date"]) for row in rows})[-recent_dates:]
+    if newest_first:
+        dates = list(reversed(dates))
     cumulative: dict[str, int] = {}
     counts = {row_date: {} for row_date in dates}
     for row in rows:
@@ -141,8 +155,9 @@ def build_hot_stock_matrix(rows: list[dict[str, object]], recent_dates: int = 6,
         if industry in ("", "未匹配"):
             industry = "待申万映射"
         cumulative[industry] = cumulative.get(industry, 0) + 1
-        if row["date"] in counts:
-            counts[row["date"]][industry] = counts[row["date"]].get(industry, 0) + 1
+        row_date = str(row.get("date") or "")
+        if row_date in counts:
+            counts[row_date][industry] = counts[row_date].get(industry, 0) + 1
     named = sorted(cumulative, key=lambda value: (-cumulative[value], value))[:named_max]
     overflow = set(cumulative) - set(named)
     matrix_rows = []
@@ -189,9 +204,11 @@ def _sw_crowding(path: Path, market_history: list[dict[str, object]], target_dat
         amounts = [targets[name].get("amount_100m") for name in TARGET_SW if name in targets]
         row["combined"] = {
             "amount_100m": sum(value for value in amounts if value is not None)
-            if len(amounts) == 4 and all(value is not None for value in amounts) else None,
+            if len(amounts) == 4 and all(value is not None for value in amounts)
+            else None,
             "amount_share_of_a": sum(value for value in shares if value is not None)
-            if len(shares) == 4 and all(value is not None for value in shares) else None,
+            if len(shares) == 4 and all(value is not None for value in shares)
+            else None,
         }
         out.append(row)
     return out
@@ -284,6 +301,7 @@ def build_report_data(target_date: str, root: Path = Path(".")) -> dict[str, obj
         "indices_history": indices_history,
         "sw_industry_latest": sw_industry,
         "hot_stock_matrix": matrix,
+        "hot_stocks_history": hot_all,
         "hot_stocks_latest": latest_hot,
         "sw_crowding_history": sw_crowding,
         "innovation_history": innovation,
