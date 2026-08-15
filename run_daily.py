@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from market_monitor.production import run
 from market_monitor.history_preflight import append_index_history
 from market_monitor.canonical_promotion import prepare_stage, promote_candidate
+from market_monitor.canonical_store import normalize_candidate
 from market_monitor.canonical_validation import validate_candidate
 from build_report_data import append_hot_stock_history
 
@@ -34,9 +35,8 @@ def _copy_raw_outputs(stage_output: Path, output_dir: Path) -> None:
         if not path.is_file():
             continue
         shutil.copy2(path, raw_dir / path.name)
-        # Transitional compatibility: downstream report-data code still reads the
-        # acquisition payload/validation from output/<date>. Canonical business
-        # histories themselves are never read from this copy.
+        # Keep acquisition evidence available for audit/source manifests. Business
+        # display data is built only from promoted Canonical histories.
         shutil.copy2(path, output_dir / path.name)
 
 
@@ -74,7 +74,9 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _copy_raw_outputs(Path(result["output_dir"]), output_dir)
 
+    normalization = normalize_candidate(stage_root)
     canonical_validation = validate_candidate(stage_root, repo_root, args.target_date)
+    canonical_validation["normalization"] = normalization
     validation_path = output_dir / "canonical_validation.json"
     validation_path.write_text(
         json.dumps(canonical_validation, ensure_ascii=False, indent=2),
@@ -83,9 +85,11 @@ def main() -> None:
     promote_candidate(stage_root, repo_root, args.target_date, canonical_validation)
 
     payload_validation = result["validation"]
+    removed = sum(int(item.get("removed_identical_rows") or 0) for item in normalization.values())
     print(
         f"completed date={args.target_date} payload_status={payload_validation['status']} "
-        f"canonical_status={canonical_validation['status']} output={output_dir}"
+        f"canonical_status={canonical_validation['status']} identical_duplicates_removed={removed} "
+        f"output={output_dir}"
     )
 
 
