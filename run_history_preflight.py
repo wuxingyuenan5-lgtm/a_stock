@@ -4,8 +4,42 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Callable
 
 from market_monitor.history_preflight import preflight_history
+from market_monitor.canonical_promotion import prepare_stage, promote_candidate
+from market_monitor.canonical_validation import validate_candidate
+
+
+def execute_preflight_with_gate(
+    root: Path,
+    target_date: str,
+    definitions: list[dict[str, str]],
+    repair_indices: bool = True,
+    repair_fn: Callable = preflight_history,
+) -> dict[str, object]:
+    repo_root = root.resolve()
+    stage_root = prepare_stage(repo_root, target_date)
+    result = repair_fn(
+        stage_root,
+        target_date,
+        definitions,
+        repair_indices=repair_indices,
+    )
+    canonical_validation = validate_candidate(stage_root, repo_root, target_date)
+
+    output = repo_root / "output" / target_date / "history_preflight.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    combined: dict[str, object] = {
+        "preflight": result,
+        "canonical_validation": canonical_validation,
+    }
+    output.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    manifest = promote_candidate(stage_root, repo_root, target_date, canonical_validation)
+    combined["canonical_promotion"] = manifest
+    output.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
+    return combined
 
 
 def main() -> None:
@@ -16,21 +50,23 @@ def main() -> None:
     parser.add_argument("--no-repair-indices", action="store_true")
     args = parser.parse_args()
 
-    root = Path(args.root)
-    config = json.loads((root / args.config).read_text(encoding="utf-8"))
-    result = preflight_history(
+    root = Path(args.root).resolve()
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = root / config_path
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    combined = execute_preflight_with_gate(
         root=root,
-        report_date=args.target_date,
+        target_date=args.target_date,
         definitions=config["indices"],
         repair_indices=not args.no_repair_indices,
     )
+    after = combined["preflight"]["after"]
     output = root / "output" / args.target_date / "history_preflight.json"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    after = result["after"]
     print(
         f"history_preflight={output} "
-        f"index_gaps={len(after['indices'])} denominator_gaps={len(after['market_denominator_dates'])}"
+        f"index_gaps={len(after['indices'])} denominator_gaps={len(after['market_denominator_dates'])} "
+        f"canonical={combined['canonical_validation']['status']}"
     )
 
 
