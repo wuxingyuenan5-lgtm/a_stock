@@ -39,6 +39,71 @@ def row_key(row: dict, spec: TableSpec) -> tuple[str, ...]:
     return tuple(str(row.get(field) or "") for field in spec.key_fields)
 
 
+def _row_signature(row: dict[str, str], fieldnames: list[str]) -> tuple[str, ...]:
+    return tuple(str(row.get(field) or "") for field in fieldnames)
+
+
+def normalize_identical_duplicates(path: Path, spec: TableSpec) -> dict[str, object]:
+    """Remove only exact duplicate rows for the same primary key.
+
+    Conflicting rows sharing a primary key are deliberately preserved so the
+    Canonical validator can fail rather than guessing which record is correct.
+    """
+    if not path.exists():
+        return {
+            "removed_identical_rows": 0,
+            "conflicting_duplicate_keys": [],
+            "before_rows": 0,
+            "after_rows": 0,
+        }
+
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    by_key: dict[tuple[str, ...], list[dict[str, str]]] = {}
+    for row in rows:
+        by_key.setdefault(row_key(row, spec), []).append(row)
+
+    output_rows: list[dict[str, str]] = []
+    removed = 0
+    conflicts: list[list[str]] = []
+    for key, key_rows in by_key.items():
+        signatures: dict[tuple[str, ...], dict[str, str]] = {}
+        ordered_signatures: list[tuple[str, ...]] = []
+        for row in key_rows:
+            signature = _row_signature(row, fieldnames)
+            if signature not in signatures:
+                signatures[signature] = row
+                ordered_signatures.append(signature)
+            else:
+                removed += 1
+        if len(ordered_signatures) > 1:
+            conflicts.append(list(key))
+        output_rows.extend(signatures[signature] for signature in ordered_signatures)
+
+    if removed:
+        with path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(output_rows)
+
+    return {
+        "removed_identical_rows": removed,
+        "conflicting_duplicate_keys": sorted(conflicts),
+        "before_rows": len(rows),
+        "after_rows": len(output_rows),
+    }
+
+
+def normalize_candidate(root: Path) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for name, spec in CANONICAL_TABLES.items():
+        result[name] = normalize_identical_duplicates(root / spec.path, spec)
+    return result
+
+
 def audit_table(path: Path, spec: TableSpec) -> dict[str, object]:
     rows = read_csv_rows(path)
     seen: set[tuple[str, ...]] = set()
