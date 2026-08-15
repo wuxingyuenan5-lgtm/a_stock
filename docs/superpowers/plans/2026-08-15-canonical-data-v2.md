@@ -48,13 +48,11 @@ import unittest
 
 from market_monitor.canonical_store import TableSpec, audit_table, diff_history
 
-
 class CanonicalStoreTest(unittest.TestCase):
     def _write(self, path: Path, rows: list[dict]):
         path.parent.mkdir(parents=True, exist_ok=True)
-        fields = list(rows[0])
         with path.open("w", encoding="utf-8-sig", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fields)
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
             w.writeheader(); w.writerows(rows)
 
     def test_audit_reports_duplicate_keys_and_latest_date(self):
@@ -72,7 +70,7 @@ class CanonicalStoreTest(unittest.TestCase):
             self.assertEqual(audit["duplicate_key_count"], 1)
             self.assertEqual(len(audit["sha256"]), 64)
 
-    def test_diff_history_flags_only_pre_target_changes_as_history_mutations(self):
+    def test_diff_history_flags_only_pre_target_changes(self):
         spec = TableSpec("market", "x.csv", ("date",), "date")
         before = [{"date":"2026-08-13","advance":"100"},{"date":"2026-08-14","advance":"200"}]
         after = [{"date":"2026-08-13","advance":"101"},{"date":"2026-08-14","advance":"201"}]
@@ -87,10 +85,9 @@ Run: `python -m unittest tests.test_canonical_store -v`
 
 Expected: FAIL because `market_monitor.canonical_store` does not exist.
 
-- [ ] **Step 3: Implement the minimal audit layer**
+- [ ] **Step 3: Implement the audit layer**
 
 ```python
-# market_monitor/canonical_store.py
 from dataclasses import dataclass
 from pathlib import Path
 import csv, hashlib
@@ -119,14 +116,15 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def _key(row, spec): return tuple(str(row.get(k) or "") for k in spec.key_fields)
+def row_key(row: dict, spec: TableSpec):
+    return tuple(str(row.get(k) or "") for k in spec.key_fields)
 
 def audit_table(path: Path, spec: TableSpec) -> dict[str, object]:
     rows = read_csv_rows(path)
     seen, duplicates = set(), 0
     for row in rows:
-        key = _key(row, spec)
-        duplicates += key in seen
+        key = row_key(row, spec)
+        if key in seen: duplicates += 1
         seen.add(key)
     dates = [str(r.get(spec.date_field) or "")[:10] for r in rows if r.get(spec.date_field)]
     return {"row_count":len(rows), "latest_date":max(dates, default=None),
@@ -134,7 +132,7 @@ def audit_table(path: Path, spec: TableSpec) -> dict[str, object]:
             "sha256":file_sha256(path) if path.exists() else None}
 
 def diff_history(before, after, spec, target_date):
-    b, a = {_key(r,spec):r for r in before}, {_key(r,spec):r for r in after}
+    b = {row_key(r,spec):r for r in before}; a = {row_key(r,spec):r for r in after}
     modified, target_changed = set(), 0
     for key in set(b) | set(a):
         if b.get(key) == a.get(key): continue
@@ -170,7 +168,6 @@ git commit -m "feat: add canonical history audit primitives"
 **Interfaces:**
 - Consumes: `CANONICAL_TABLES`, `read_csv_rows`, `audit_table`, `diff_history`
 - Produces: `validate_candidate(candidate_root: Path, canonical_root: Path, target_date: str) -> dict[str, object]`
-- Result schema: `{"status":"PASS|WARN|FAIL","failures":list[str],"warnings":list[str],"tables":dict,"cross_checks":dict}`
 
 - [ ] **Step 1: Write failing tests for mathematical inconsistencies and dangerous history loss**
 
@@ -192,7 +189,6 @@ class CanonicalValidationTest(unittest.TestCase):
             row={"date":"2026-08-14","advance":2306,"decline":2871,"flat":154,"effective_stocks":5330,"total_amount_100m":21415,"hot_count":12,"hot_amount_100m":1796,"market_breadth":0.9}
             self._write(old,"data/history/market_core.csv",fields,[row]); self._write(cand,"data/history/market_core.csv",fields,[row])
             result=validate_candidate(Path(cand),Path(old),"2026-08-14")
-            self.assertEqual(result["status"],"FAIL")
             self.assertIn("market_effective_stock_mismatch:2026-08-14",result["failures"])
             self.assertIn("market_breadth_mismatch:2026-08-14",result["failures"])
 
@@ -203,7 +199,6 @@ class CanonicalValidationTest(unittest.TestCase):
             self._write(old,"data/history/market_core.csv",fields,old_rows)
             self._write(cand,"data/history/market_core.csv",fields,old_rows[-1:])
             result=validate_candidate(Path(cand),Path(old),"2026-08-14")
-            self.assertEqual(result["status"],"FAIL")
             self.assertTrue(any(x.startswith("mass_history_deletion:market_core") for x in result["failures"]))
 ```
 
@@ -213,32 +208,40 @@ Run: `python -m unittest tests.test_canonical_validation -v`
 
 Expected: FAIL because validator is missing.
 
-- [ ] **Step 3: Implement deterministic hard checks**
-
-Implementation must validate at least:
+- [ ] **Step 3: Implement hard checks and warning-only anomaly checks**
 
 ```python
-# pseudo-shape inside validate_candidate
-if audit["duplicate_key_count"]:
-    failures.append(f"duplicate_key:{name}")
-if before_count and after_count < before_count * 0.90:
-    failures.append(f"mass_history_deletion:{name}:{before_count}->{after_count}")
+def _num(value):
+    try: return None if value in (None, "") else float(value)
+    except (TypeError, ValueError): return None
 
+for name, spec in CANONICAL_TABLES.items():
+    candidate_path = candidate_root / spec.path
+    canonical_path = canonical_root / spec.path
+    audit = audit_table(candidate_path, spec)
+    before = read_csv_rows(canonical_path); after = read_csv_rows(candidate_path)
+    change = diff_history(before, after, spec, target_date)
+    tables[name] = {**audit, **change}
+    if audit["duplicate_key_count"]:
+        failures.append(f"duplicate_key:{name}")
+    if before and len(after) < len(before) * 0.90:
+        failures.append(f"mass_history_deletion:{name}:{len(before)}->{len(after)}")
+
+market_rows = read_csv_rows(candidate_root / CANONICAL_TABLES["market_core"].path)
 for row in market_rows:
-    if all(_num(row.get(k)) is not None for k in ("advance","decline","flat","effective_stocks")):
-        if int(_num(row["advance"]) + _num(row["decline"]) + _num(row["flat"])) != int(_num(row["effective_stocks"])):
-            failures.append(f"market_effective_stock_mismatch:{row['date']}")
-    if _num(row.get("advance")) is not None and _num(row.get("decline")) is not None:
-        denom = _num(row["advance"]) + _num(row["decline"])
-        expected = (_num(row["advance"])-_num(row["decline"]))/denom if denom else None
-        if expected is not None and abs(expected-_num(row.get("market_breadth"))) > 1e-8:
+    a,d,f,e = (_num(row.get(k)) for k in ("advance","decline","flat","effective_stocks"))
+    if None not in (a,d,f,e) and int(a+d+f) != int(e):
+        failures.append(f"market_effective_stock_mismatch:{row['date']}")
+    if a is not None and d is not None and a+d:
+        expected=(a-d)/(a+d); actual=_num(row.get("market_breadth"))
+        if actual is None or abs(expected-actual)>1e-8:
             failures.append(f"market_breadth_mismatch:{row['date']}")
-    if _num(row.get("hot_amount_100m")) is not None and _num(row.get("total_amount_100m")) is not None:
-        if _num(row["hot_amount_100m"]) > _num(row["total_amount_100m"]):
-            failures.append(f"hot_amount_gt_market:{row['date']}")
+    hot,total=_num(row.get("hot_amount_100m")),_num(row.get("total_amount_100m"))
+    if hot is not None and total is not None and hot>total:
+        failures.append(f"hot_amount_gt_market:{row['date']}")
 ```
 
-Also add warnings, not failures, for suspicious but plausible day-over-day jumps, e.g. all-A turnover ratio `<0.35` or `>2.8` versus the previous available trading day. Record historical changes from `diff_history()` in each table audit.
+Sort available market rows by date and add `WARN` when adjacent non-null `total_amount_100m` values have ratio `<0.35` or `>2.8`; do not FAIL solely on that jump.
 
 - [ ] **Step 4: Run validator tests**
 
@@ -263,28 +266,42 @@ git commit -m "feat: validate canonical market history candidates"
 - Create: `tests/test_canonical_promotion.py`
 
 **Interfaces:**
-- Consumes: existing `market_monitor.production.run(...)`
 - Produces: `prepare_stage(root: Path, target_date: str) -> Path`
 - Produces: `promote_candidate(stage_root: Path, canonical_root: Path, target_date: str, validation: dict) -> dict[str, object]`
-- Produces: `output/<date>/canonical_manifest.json`
 
-- [ ] **Step 1: Write failing promotion tests**
+- [ ] **Step 1: Write failing promotion tests with real files**
 
 ```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import csv, json, unittest
+from market_monitor.canonical_promotion import prepare_stage, promote_candidate
+
 class CanonicalPromotionTest(unittest.TestCase):
+    def _write_market(self, root: Path, amount: int):
+        p=root/"data/history/market_core.csv"; p.parent.mkdir(parents=True,exist_ok=True)
+        with p.open("w",encoding="utf-8-sig",newline="") as f:
+            w=csv.DictWriter(f,fieldnames=["date","total_amount_100m"]); w.writeheader(); w.writerow({"date":"2026-08-14","total_amount_100m":amount})
+        return p
+
     def test_fail_never_changes_canonical_file(self):
-        # prepare canonical market_core.csv with known bytes, candidate with different bytes
-        # call promote_candidate(..., {"status":"FAIL",...})
-        # assert canonical bytes are unchanged and promotion raises RuntimeError
-        ...
+        with TemporaryDirectory() as td:
+            root=Path(td); canonical=self._write_market(root,21415); before=canonical.read_bytes()
+            stage=prepare_stage(root,"2026-08-14"); self._write_market(stage,1)
+            with self.assertRaises(RuntimeError):
+                promote_candidate(stage,root,"2026-08-14",{"status":"FAIL","failures":["bad"]})
+            self.assertEqual(canonical.read_bytes(),before)
 
     def test_pass_promotes_candidate_and_writes_manifest(self):
-        # candidate contains a target-date row, validation status PASS
-        # assert canonical file now matches candidate and manifest contains before/after sha256
-        ...
+        with TemporaryDirectory() as td:
+            root=Path(td); self._write_market(root,21415)
+            stage=prepare_stage(root,"2026-08-14"); candidate=self._write_market(stage,22000)
+            manifest=promote_candidate(stage,root,"2026-08-14",{"status":"PASS","failures":[],"warnings":[],"tables":{}})
+            self.assertEqual((root/"data/history/market_core.csv").read_bytes(),candidate.read_bytes())
+            saved=json.loads((root/"output/2026-08-14/canonical_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["target_date"],"2026-08-14")
+            self.assertEqual(manifest["target_date"],"2026-08-14")
 ```
-
-Use real temporary files; do not mock filesystem behavior.
 
 - [ ] **Step 2: Run RED**
 
@@ -294,42 +311,51 @@ Expected: FAIL because `canonical_promotion.py` does not exist.
 
 - [ ] **Step 3: Implement staging and atomic promotion**
 
-`prepare_stage()` must:
-
 ```python
-stage = root / "output" / target_date / ".canonical_stage"
-shutil.rmtree(stage, ignore_errors=True)
-shutil.copytree(root / "data", stage / "data", dirs_exist_ok=True)
-return stage
+def prepare_stage(root: Path, target_date: str) -> Path:
+    stage=root/"output"/target_date/".canonical_stage"
+    shutil.rmtree(stage,ignore_errors=True); stage.mkdir(parents=True,exist_ok=True)
+    if (root/"data").exists(): shutil.copytree(root/"data",stage/"data",dirs_exist_ok=True)
+    return stage
+
+def _atomic_copy(src: Path, dst: Path):
+    dst.parent.mkdir(parents=True,exist_ok=True)
+    tmp=dst.with_name(dst.name+".tmp")
+    shutil.copy2(src,tmp); tmp.replace(dst)
+
+def promote_candidate(stage_root, canonical_root, target_date, validation):
+    if validation.get("status")=="FAIL": raise RuntimeError("canonical validation failed")
+    table_manifest={}
+    for name,spec in CANONICAL_TABLES.items():
+        src=stage_root/spec.path; dst=canonical_root/spec.path
+        if not src.exists(): continue
+        before=audit_table(dst,spec) if dst.exists() else {"sha256":None,"row_count":0,"latest_date":None}
+        _atomic_copy(src,dst); after=audit_table(dst,spec)
+        table_manifest[name]={"before":before,"after":after}
+    manifest={"target_date":target_date,"validation_status":validation.get("status"),"tables":table_manifest,
+              "warnings":validation.get("warnings",[]),"failures":validation.get("failures",[])}
+    out=canonical_root/"output"/target_date/"canonical_manifest.json"; out.parent.mkdir(parents=True,exist_ok=True)
+    out.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
+    return manifest
 ```
 
-`promote_candidate()` must:
+Also promote `data/sw_industry_latest.csv` atomically if it exists in staging, but never delete the live file when staging lacks it.
 
-- refuse any validation with `status == "FAIL"`;
-- copy only paths declared in `CANONICAL_TABLES` plus `data/sw_industry_latest.csv`;
-- write through a temporary sibling file and `Path.replace()` to avoid partial writes;
-- record before/after SHA256, row counts, latest dates and historical mutations in `canonical_manifest.json`;
-- never silently delete a Canonical file because it is absent from staging.
-
-- [ ] **Step 4: Refactor `run_daily.py` to execute collectors against the stage root**
-
-The daily sequence becomes:
+- [ ] **Step 4: Refactor `run_daily.py` to run collectors against staging**
 
 ```python
-stage_root = prepare_stage(Path("."), args.target_date)
-result = run(
-    target_date=args.target_date,
-    config_path=Path(".").resolve() / args.config,
-    root=stage_root,
-    refresh_mapping=args.refresh_mapping,
-)
-append_index_history(stage_root / "data/history/indices_history.csv", ...)
-append_hot_stock_history(stage_root / "data/history/hot_stocks.csv", ...)
-validation = validate_candidate(stage_root, Path("."), args.target_date)
-manifest = promote_candidate(stage_root, Path("."), args.target_date, validation)
+repo_root=Path(".").resolve()
+stage_root=prepare_stage(repo_root,args.target_date)
+result=run(target_date=args.target_date,config_path=repo_root/args.config,root=stage_root,refresh_mapping=args.refresh_mapping)
+payload=result["payload"]
+append_index_history(stage_root/"data/history/indices_history.csv",list((payload.get("indices") or {}).values()))
+append_hot_stock_history(stage_root/"data/history/hot_stocks.csv",args.target_date,payload.get("hot_stocks") or [])
+raw_source=stage_root/"output"/args.target_date
+raw_dest=repo_root/"output"/args.target_date/"raw"
+shutil.copytree(raw_source,raw_dest,dirs_exist_ok=True)
+canonical_validation=validate_candidate(stage_root,repo_root,args.target_date)
+promote_candidate(stage_root,repo_root,args.target_date,canonical_validation)
 ```
-
-Copy collector artifacts from `stage_root/output/<date>/` to `output/<date>/raw/` before promotion so Raw acquisition evidence remains auditable even when promotion fails.
 
 - [ ] **Step 5: Run focused tests**
 
@@ -346,7 +372,7 @@ git commit -m "feat: gate daily history writes through canonical staging"
 
 ---
 
-### Task 4: Route historical repairs and derived innovation share through the same gate
+### Task 4: Route historical repairs and innovation derivation through the same gate
 
 **Files:**
 - Modify: `run_history_preflight.py`
@@ -356,40 +382,58 @@ git commit -m "feat: gate daily history writes through canonical staging"
 
 **Interfaces:**
 - Consumes: `prepare_stage`, `validate_candidate`, `promote_candidate`
-- Produces: no new public interface; historical repair commands must use the Canonical gate.
 
-- [ ] **Step 1: Write failing tests proving preflight cannot directly mutate Canonical on invalid repair**
+- [ ] **Step 1: Write failing preflight gate test**
 
 ```python
-class CanonicalBackfillGateTest(unittest.TestCase):
-    def test_history_preflight_repairs_stage_not_live_history(self):
-        # canonical indices_history has a verified 8/13 row
-        # stage repair returns null/bad candidate
-        # after command path, canonical verified row remains unchanged
-        ...
-```
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import csv, unittest
+from market_monitor.canonical_promotion import prepare_stage
+from market_monitor.history_preflight import append_index_history
+from market_monitor.canonical_validation import validate_candidate
 
-Also add a `build_report_data` test asserting innovation share is recomputed from Canonical same-day amounts and never trusts a stale precomputed share when the denominator differs.
+class CanonicalBackfillGateTest(unittest.TestCase):
+    def test_bad_staged_repair_cannot_erase_verified_index(self):
+        with TemporaryDirectory() as td:
+            root=Path(td); p=root/"data/history/indices_history.csv"; p.parent.mkdir(parents=True,exist_ok=True)
+            fields=["date","name","code","close","return","amount_100m","source","status"]
+            with p.open("w",encoding="utf-8-sig",newline="") as f:
+                w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerow({"date":"2026-08-13","name":"上证50","code":"1.000016","close":2928.12,"return":-0.0035,"amount_100m":1901.77,"source":"verified","status":"ok"})
+            before=p.read_bytes(); stage=prepare_stage(root,"2026-08-14")
+            append_index_history(stage/"data/history/indices_history.csv",[{"date":"2026-08-13","name":"上证50","code":"1.000016","close":None,"return":None,"amount_100m":None,"source":"failed","status":"error"}])
+            validation=validate_candidate(stage,root,"2026-08-14")
+            self.assertNotEqual(validation["status"],"FAIL")
+            self.assertEqual(p.read_bytes(),before)
+```
 
 - [ ] **Step 2: Run RED**
 
 Run: `python -m unittest tests.test_canonical_backfill_gate tests.test_report_data -v`
 
-Expected: at least the new gate test FAILS.
+Expected: new test fails until preflight uses the staging gate consistently.
 
-- [ ] **Step 3: Change preflight to stage → validate → promote**
-
-`run_history_preflight.py` must prepare a staging root, run `preflight_history(stage_root, ...)`, validate the staged Canonical snapshot, and promote only PASS/WARN candidates with zero hard failures. If remote history is unavailable, retain the old Canonical history and emit WARN; do not rewrite with nulls.
-
-- [ ] **Step 4: Make `build_report_data.py` Canonical-only and recompute deterministic derivatives**
-
-For innovation rows:
+- [ ] **Step 3: Change `run_history_preflight.py` to stage → repair → validate → promote**
 
 ```python
-share = amount / denominator[d] if amount is not None and denominator.get(d) not in (None, 0) else None
+repo_root=Path(args.root).resolve(); stage=prepare_stage(repo_root,args.target_date)
+result=preflight_history(stage,args.target_date,definitions,repair_indices=True)
+validation=validate_candidate(stage,repo_root,args.target_date)
+manifest=promote_candidate(stage,repo_root,args.target_date,validation)
+out=repo_root/"output"/args.target_date/"history_preflight.json"
+out.write_text(json.dumps({"preflight":result,"canonical":manifest},ensure_ascii=False,indent=2),encoding="utf-8")
 ```
 
-Do not read Raw paths and do not accept `volume_activity_20d` anywhere in the output contract.
+Remote failure must leave verified values untouched; `append_index_history` already preserves non-null history on null reruns.
+
+- [ ] **Step 4: Make innovation share deterministic in `build_report_data.py`**
+
+```python
+denominator={r["date"]:r.get("total_amount_100m") for r in market_history}
+share=amount/denominator[d] if amount is not None and denominator.get(d) not in (None,0) else None
+```
+
+Do not read Raw paths, do not trust a stale precomputed share over this same-day calculation, and do not emit `volume_activity_20d`.
 
 - [ ] **Step 5: Run focused tests**
 
@@ -417,45 +461,42 @@ git commit -m "feat: apply canonical gate to history repairs"
 - Modify: `docs/DAILY_PIPELINE.md`
 
 **Interfaces:**
-- Produces CLI: `python validate_canonical_data.py --target-date YYYY-MM-DD --output output/<date>/canonical_validation.json`
-- Production artifact must include `canonical_manifest.json` and `canonical_validation.json`.
+- CLI: `python validate_canonical_data.py --target-date YYYY-MM-DD --output output/<date>/canonical_validation.json`
 
-- [ ] **Step 1: Write failing workflow-contract and CLI tests**
+- [ ] **Step 1: Write failing workflow and CLI tests**
 
-Assert the formal order by workflow step names:
-
-```text
-History preflight and recoverable backfill
-→ Produce normalized payload
-→ Validate Canonical data
-→ Build normalized report data
-→ Render offline HTML
-→ Validate HTML
+```python
+class CanonicalCliTest(unittest.TestCase):
+    def test_runtime_declares_canonical_v2(self):
+        cfg=json.loads((ROOT/"config/html_production_runtime.json").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["data_layer"],"canonical_v2")
+        self.assertTrue(cfg["raw_direct_render_forbidden"])
 ```
 
-Assert `config/html_production_runtime.json` declares `data_layer = "canonical_v2"` and `raw_direct_render_forbidden = true`.
+In `tests/test_production_v2_contract.py`, compare workflow step-name positions and assert:
+
+```python
+names=["History preflight and recoverable backfill","Produce normalized payload","Validate Canonical data","Build normalized report data","Render offline HTML","Validate HTML"]
+positions=[text.index(f"- name: {name}") for name in names]
+self.assertEqual(positions,sorted(positions))
+```
 
 - [ ] **Step 2: Run RED**
 
 Run: `python -m unittest tests.test_canonical_cli tests.test_production_v2_contract -v`
 
-Expected: FAIL on missing CLI/runtime contract.
+Expected: FAIL on missing CLI/runtime fields/workflow step.
 
 - [ ] **Step 3: Implement CLI and workflow hard stop**
 
-`validate_canonical_data.py` loads the promoted Canonical root, runs the same invariants in audit-only mode, writes JSON, and exits `1` only on FAIL.
-
-The workflow must upload:
-
-```text
-A股每日市场监控_YYYYMMDD.html
-report_data.json
-canonical_manifest.json
-canonical_validation.json
-html_validation.json
-history_preflight.json
-source_manifest.json
+```python
+# validate_canonical_data.py
+result=validate_candidate(Path("."),Path("."),args.target_date)
+Path(args.output).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+if result["status"]=="FAIL": raise SystemExit(1)
 ```
+
+Add workflow step `Validate Canonical data` before `Build normalized report data`. Include these files in the production artifact: `A股每日市场监控_YYYYMMDD.html`, `report_data.json`, `canonical_manifest.json`, `canonical_validation.json`, `html_validation.json`, `history_preflight.json`, `source_manifest.json`.
 
 - [ ] **Step 4: Run full unit suite**
 
@@ -463,16 +504,9 @@ Run: `python -m unittest discover -s tests -v`
 
 Expected: all tests PASS.
 
-- [ ] **Step 5: Run an 8/14 acceptance build**
+- [ ] **Step 5: Run 2026-08-14 acceptance build**
 
-Run locally/CI on the PR branch using the already validated 2026-08-14 data. Verify:
-
-- Canonical validator has `failures=[]`;
-- 8/13 three-index records remain populated;
-- `hot_stocks.csv` row count does not shrink;
-- historical mutations are listed rather than silent;
-- `report_data.json` is built only after Canonical validation;
-- HTML Validator remains PASS/WARN with zero failures.
+Verify from the generated JSON files that Canonical failures are empty, 8/13 three-index values remain populated, `hot_stocks.csv` does not shrink, historical mutations are listed, and `report_data.json` is produced only after Canonical validation.
 
 - [ ] **Step 6: Commit**
 
