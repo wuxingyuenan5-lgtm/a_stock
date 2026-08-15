@@ -1,0 +1,69 @@
+{
+  "runtime_version": "1.0",
+  "html_version": "1.1",
+  "report_name": "A股每日市场监控",
+  "primary_format": "html",
+  "offline_single_file": true,
+  "requires_excel_mother": false,
+  "data_layer": "canonical_v2",
+  "raw_direct_render_forbidden": true,
+  "data_contract": "report_data.json",
+  "renderer": "render_market_monitor_html.py",
+  "validator": "validate_market_monitor_html.py",
+  "canonical_validator": "validate_canonical_data.py",
+  "history_preflight": "run_history_preflight.py",
+  "time_slider_default": "full_history",
+  "hot_matrix_default_dates": 10,
+  "hot_matrix_order": "newest_left",
+  "sw_sort_cycle": ["original", "desc", "asc", "original"],
+  "share_chart_kind": "area",
+  "turnover_chart_kind": "line",
+  "innovation_turnover_rule": "supplier_direct_only",
+  "activity_proxy": "retired",
+  "missing_data_policy": {
+    "never_zero_fill": true,
+    "never_use_proxy_for_turnover": true,
+    "never_erase_verified_non_null_with_null": true,
+    "historical_indices_use_historical_klines_only": true,
+    "unrecoverable_same_definition_gap_is_warn": true
+  },
+  "canonical_policy": {
+    "raw_collection_writes_stage_only": true,
+    "promotion_requires_no_hard_failures": true,
+    "exact_duplicate_rows_may_be_normalized": true,
+    "conflicting_duplicate_keys_fail": true,
+    "history_loss_checked_by_unique_business_keys": true,
+    "historical_mutations_are_audited": true
+  },
+  "html_interaction_policy": {
+    "all_time_charts_have_range_controls": true,
+    "range_controls_default_to_full_history": true,
+    "range_change_recalculates_visible_axes": true,
+    "legends_identify_each_series": true,
+    "tooltip_requires_date_metric_value_unit": true,
+    "sw_three_state_sorting": true,
+    "four_industry_combined_amount_presentation": "forbidden",
+    "innovation_activity_proxy": "forbidden"
+  },
+  "web_execution": {
+    "single_artifact_download": true,
+    "steps": [
+      "read data/latest_bundle_pointer.json",
+      "download the named HTML production artifact",
+      "open A股每日市场监控_YYYYMMDD.html",
+      "use canonical_validation.json and html_validation.json for acceptance"
+    ]
+  },
+  "artifact": {
+    "name_pattern": "a-share-monitor-html-YYYY-MM-DD",
+    "primary_file_pattern": "A股每日市场监控_YYYYMMDD.html",
+    "required_companions": [
+      "report_data.json",
+      "canonical_manifest.json",
+      "canonical_validation.json",
+      "html_validation.json",
+      "source_manifest.json",
+      "history_preflight.json"
+    ]
+  }
+}

@@ -1,242 +1,195 @@
-# A股每日市场监控｜生产链路 v2.0
+# A股每日市场监控｜生产链路 v3.1
 
-## 1. 目标
+## 1. 正式架构
 
-日常生产必须是可重复、可停止、不可自由发挥的固定流水线：
+HTML 是每日正式展示成品，Excel 不再是 HTML 的中间母表。
 
 ```text
-GitHub 数据生产
-→ 标准化 payload + validation
-→ 自包含 render bundle
-→ latest bundle pointer
-→ 网页 ChatGPT 读取唯一 runtime manifest
-→ 上一交易日已验证滚动母表
-→ Renderer v1.4 原表增量更新
-→ workbook validator
-→ 今日 XLSX
-→ 今日 XLSX 成为下一交易日母表
+历史完整性预检 / 定点回填
+→ Raw / Stage 当日采集
+→ Canonical 候选标准化
+→ Canonical Validator
+→ 通过后 Promote 到正式历史 CSV
+→ report_data.json
+→ HTML v1.1 Renderer
+→ HTML Validator
+→ HTML + report_data + Canonical/HTML validation 单 artifact
+→ GitHub 归档
 ```
 
-GitHub 负责数据、规则、版本和 bundle；网页端只负责执行固定 Renderer 和交付 Excel。
+唯一网页运行入口：`config/html_production_runtime.json`。
 
----
+旧 Excel Renderer v1.5 暂时保留为兼容/历史路径，不属于 HTML 日常关键路径。
 
-## 2. 唯一入口
+## 2. Raw 与 Canonical 的职责
 
-网页端每天首先只读取：
+Raw/Stage 保存当天接口直接结果、来源、抓取状态和失败信息，不直接驱动 HTML。
 
-`config/web_production_runtime.json`
+Canonical 是正式历史母表。当前继续使用 GitHub CSV，不引入数据库，但所有正式历史必须经过 Canonical gate。核心表至少包括：
 
-随后只读取：
-
-`data/latest_bundle_pointer.json`
-
-正常日禁止仓库全局搜索、禁止重新理解版式、禁止人工重算 bundle 已有业务数据。
-
----
-
-## 3. GitHub 每日关键路径
-
-`.github/workflows/daily_market_monitor.yml` 手工触发。
-
-正常生产路径：
-
-1. 安装依赖；
-2. 快速语法预检；
-3. 刷新 05 所需申万四行业拥挤度缓存；
-4. `run_daily.py` 生成当天标准化市场 payload；
-5. 使用 `update_sw_industry_fast.py` 两次批量申万实时接口增量更新 01/06 所需行业快照；
-6. `prepare_render_bundle.py` 生成自包含 bundle；
-7. 写 `data/latest_bundle_pointer.json`；
-8. 上传一个 `a-share-monitor-YYYY-MM-DD` artifact；
-9. 持久化增量历史、缓存和 JSON 状态。
-
-完整单元测试只在 PR/code review 跑，不再占用正常日生产时间。
-
-### 申万行业刷新分层
-
-- **日常快速模式**：`update_sw_industry_fast.py`
-  - 只做一级行业 + 二级行业两次批量请求；
-  - 在已有 `sw_industry_history.csv` 上 upsert 当天；
-  - 重算 20 日波动率；
-  - 保留 260 日滚动历史；
-  - 覆盖率低于 90% 时失败并沿用上一次已验证缓存。
-- **完整刷新模式**：`update_sw_industry.py`
-  - 仅 bootstrap、接口结构变化、缓存损坏或人工选择 `full_refresh_sw_industry=true` 时执行；
-  - 不再进入普通日关键路径。
-
-历史目标日不得使用实时批量接口伪装历史值；非当天目标日直接沿用已验证缓存。
-
----
-
-## 4. 标准化数据层
-
-`run_daily.py` 是业务数据生产入口，生成：
-
-- `daily_payload.json`
-- `validation.json`
-- `source_manifest.json`
+- `market_core.csv`
+- `indices_history.csv`
 - `hot_stocks.csv`
-- `all_a_snapshot.csv`
+- `innovation_drug_eastmoney.csv`
 - `sw_analysis_daily_second.csv`
+- `sw_industry_history.csv`
 
-并维护：
+`report_data.json` 只读取通过验证的 Canonical 数据，不读取 Raw。
 
-- `data/history/market_core.csv`
-- 创新药主/备独立历史
-- 申万个股二级行业映射缓存
+Canonical gate 检查：
 
-原则：
+- 主键唯一；
+- 完全重复行可以规范化去重，冲突重复键 FAIL；
+- 已验证非空历史不得被空值覆盖；
+- 历史非报告日修改必须记录；
+- 大规模历史删除、唯一业务键数量异常下降、最新日期倒退 FAIL；
+- `上涨 + 下跌 + 平盘 = 有效股票数`；
+- 市场宽度公式复核；
+- 百亿成交额不得大于全A成交额；
+- 占比/换手率等字段做范围与异常跳变检查；
+- 每次输出 `canonical_validation.json` 与 `canonical_manifest.json`，manifest 记录各表 SHA256、行数、最新日期及历史变更。
 
-- 同一字段优先一个稳定接口一次获取；
-- 缺失不写 0；
-- 不跨源补值；
-- 新交易日接口失败则该字段留空并 WARN；
-- 同日重跑不得用空值覆盖母表中已验证非空值。
+Canonical Validator 为 FAIL 时，不允许生成正式 `report_data.json` 和 HTML。
 
----
+## 3. 每日生产顺序
 
-## 5. Render bundle
+`.github/workflows/daily_market_monitor.yml` 正常日依次执行：
 
-`prepare_render_bundle.py` 将网页端需要的输入封装为一个 artifact。
+1. 安装依赖与快速语法检查；
+2. `run_history_preflight.py` 扫描历史关键字段并定点修复可恢复缺口；
+3. `run_daily.py` 在 staging 中完成当日市场、指数、百亿成交、申万与创新药采集/更新；
+4. `validate_canonical_data.py` 对候选 Canonical 做结构、历史和数学一致性验证；
+5. 仅在 Canonical 非 FAIL 时更新正式历史；
+6. `build_report_data.py` 从 Canonical 生成唯一展示数据合同；
+7. `render_market_monitor_html.py` 生成 HTML v1.1 单文件报告；
+8. `validate_market_monitor_html.py` 执行展示层一致性校验；
+9. 写 `data/latest_bundle_pointer.json`；
+10. 上传一个 `a-share-monitor-html-YYYY-MM-DD` artifact；
+11. 归档历史、manifest、validation、JSON 和 HTML。
 
-至少包含：
+完整单元测试只在 PR/code review 跑，普通日不重复执行。
 
-- `daily_payload.json`
-- `validation.json`
-- `source_manifest.json`
-- `hot_stocks.csv`
-- `innovation_history_selected.csv`
-- `sw_industry_latest.csv`
-- `render_bundle_manifest.json`
-- `web_production_manifest.json`
-- `renderer_runtime/run_excel_renderer_v14.py`
-- `renderer_runtime/excel_renderer_artifact.py`
-- `renderer_runtime/excel_renderer.json`
+## 4. 历史缺口预检
 
-网页端不再逐个拉取 GitHub 程序和配置。
+关键检查包括：
 
-`data/latest_bundle_pointer.json` 记录：
+- 上证50、Choice微盘、中证全指：历史涨跌幅与成交额；
+- 全A：成交额、涨跌家数、涨跌停、市场宽度；
+- 百亿成交：每日数量与完整个股明细；
+- 创新药：成交额、成交额占全A、供应商直接换手率；
+- 申万行业与四行业拥挤度最新有效日。
 
-- 目标日期；
-- workflow run id；
-- artifact 名称；
-- Renderer 版本；
-- 预期上一交易日母表日期与文件名；
-- runtime manifest 路径。
+规则：
 
----
+- 指数历史只能使用历史 K 线补，不用当前报价倒填；
+- 大面积初始化使用每指数一次日期区间请求，零散缺口再定点补抓；
+- 创新药成交额占比只允许 `同日创新药成交额 / 同日全部A股成交额`；
+- 创新药换手率只接受供应商直接板块换手率；
+- 新空值不得覆盖已验证历史非空值；
+- 无同定义可靠来源的数据继续留空并 WARN，禁止为了 PASS 伪填。
 
-## 6. 滚动母表
+## 5. `report_data.json`
 
-正常生产只接受：
+它是 HTML 的唯一业务数据输入，至少包含：
 
-`上一交易日正式验证输出.xlsx`
+- `meta`
+- `market_history`
+- `indices_history`
+- `sw_industry_latest`
+- `hot_stocks_history`：截至报告日的全部 Canonical 百亿成交明细历史
+- `hot_stock_matrix`：最近 10 个有记录交易日的展示矩阵
+- `hot_stocks_latest`
+- `sw_crowding_history`
+- `innovation_history`
+- `quality`
 
-作为今日母表。
+展示窗口不得反向截断 Canonical 历史。
 
-固定 `A股每日市场监控_优化版_20260810.xlsx` 只用于首次 bootstrap。
+## 6. HTML v1.1 展示与交互
 
-如果预期母表存在但网页运行时无法取得原始 xlsx 二进制：
+### 所有时间序列图
 
-**立即停止并要求用户附加/选择该文件。**
+- 单文件内嵌 JavaScript/SVG，不引用 CDN、外部 JS/CSS；
+- 默认展示全历史；
+- 每图提供开始/结束两个时间范围控制和“全部”恢复；
+- 时间范围改变后重新计算可见区 y 轴，不只是裁切；
+- tooltip 显示日期、指标、数值与单位；
+- 图例明确标识每条序列，并可隐藏/恢复序列；
+- 市场涨跌结构：上涨/下跌家数左轴，涨停/跌停家数右轴。
 
-禁止：
+### 01｜申万行业
 
-- 用更旧母表替代；
-- 根据解析文本重建；
-- 新建工作簿模仿版式；
-- 重新创建图表。
+保留搜索和一级/二级筛选；以下列支持三态排序：
 
-成功输出自动成为下一交易日母表。
+- 成交额
+- 日收益率
+- 20日年化波动率
 
----
+点击循环：`原始顺序 → 降序 → 升序 → 原始顺序`。原始顺序使用 Canonical 快照中的不可变业务顺序。
 
-## 7. Renderer v1.4
+### 04｜百亿成交
 
-入口：
+- Canonical `hot_stocks.csv` 保存全部已验证历史；
+- HTML 矩阵默认最近 10 个有记录交易日；
+- 最新日期放最左，历史日期向右；
+- 报告日完整个股明细不设行数上限。
 
-`run_excel_renderer.py -> run_excel_renderer_v14.py`
+### 05｜申万四行业资金拥挤度
 
-职责：
+- 最新摘要只显示四行业本身，不显示“四行业成交额合计”表；
+- `四行业成交额占全A` 使用四条半透明面积序列；
+- `四行业换手率` 使用四条折线；
+- 标题、图例、单位和 tooltip 明确说明通信设备、计算机设备、元件、半导体。
 
-- 01：更新申万一级/二级快照；
-- 02：目标日 upsert；
-- 03：从 02 刷新原图表 series；
-- 04：新增百亿成交明细并重算最近 6 日矩阵；
-- 05：更新四行业官方拥挤度；
-- 06：在同日四行业 + 同日全 A 分母齐全时增量更新；
-- 07：使用完整单一来源 selected history；
-- 00：同步 KPI/摘要与已有图表 series；
-- 99：记录数据质量、母表 SHA、Renderer 版本和缺失模块。
+### 06｜创新药交易拥挤度
 
-### 图表铁律
+- `创新药成交额占全A` 使用面积图；
+- `创新药换手率` 使用折线图；
+- 换手率只接受供应商直接板块字段；
+- `20日成交量活跃度代理` 永久禁止进入 Canonical、report_data 或 HTML。
 
-每日生产只允许修改已有图表的：
+## 7. 双层 Validator
 
-- categories
-- values
-- 必要的标题文字
+### Canonical Validator
 
-禁止：
+负责判断历史数据是否足以进入正式展示链。FAIL 时停止生产。
 
-- `delete_all_drawings()`
-- 新增 chart object
-- 移动 anchor
-- 改变 series identity
+### HTML Validator
 
-00 / 03 / 05 / 07 导出前后图表数量、锚点、series identity 必须完全一致。
+负责：
 
----
+1. 报告日等于市场历史最新日；
+2. 最新市场结构四项完整；
+3. 百亿成交明细数量等于 `hot_count`；
+4. 百亿成交矩阵报告日合计等于 `hot_count`；
+5. 市场图包含最新报告日数据 marker；
+6. HTML 无外部运行依赖；
+7. 创新药不存在代理活跃度字段；
+8. 已存在同日全A分母时，创新药占比不得继续为空。
 
-## 8. Validator
+无法同定义安全恢复的数据源缺口为 WARN，不允许伪填。
 
-硬校验至少包括：
-
-1. 02 第 6 行 = 目标日期；
-2. 市场宽度公式正确；
-3. 百亿成交集中度正确；
-4. 04 当日长表行数 = 02 百亿股数；
-5. 04 当日矩阵合计 = 02 百亿股数；
-6. 00 核心 KPI = 02；
-7. 03 最新日期 = 目标日；
-8. 东方财富创新药当日有真实换手率；
-9. 图表结构完全保持；
-10. 全工作簿无 `#REF!/#DIV0!/#VALUE!/#NAME?/#N/A`。
-
-FAIL：不交付。
-WARN：允许交付，但 99 页必须写明缺失项。
-
----
-
-## 9. 历史数据缺口与日常生产隔离
-
-历史百亿成交等存量缺口属于一次性 backfill/data-debt 项目，不允许每天重新回补，也不能拖慢每日生产。
-
-日常链路只做：
-
-`昨日已验证状态 + 今日增量`
-
-历史回填单独运行、单独验证、验证通过后再并入母表。
-
----
-
-## 10. 网页端明日标准动作
+## 8. 网页端标准动作
 
 用户只需：
 
-> 生成今天的A股每日市场监控
+> 更新一下今天的
 
 网页端执行：
 
 ```text
-读 web_production_runtime.json
-→ 读 latest_bundle_pointer.json
-→ 下载一个 artifact
-→ 找 expected_mother_filename
-→ 运行一次 Renderer
-→ 运行一次 validator
-→ 交付
+读 config/html_production_runtime.json
+→ 读 data/latest_bundle_pointer.json
+→ 下载唯一 a-share-monitor-html-* artifact
+→ 检查 canonical_validation.json
+→ 检查 html_validation.json
+→ 交付 A股每日市场监控_YYYYMMDD.html
 ```
 
-如果母表原始文件无法取得，只问一次用户附加母表；不再进入任何自由重建路径。
+不再寻找 Excel 母表，不再由网页端修改 Excel 图表对象或复制单元格格式。
+
+## 9. Excel 定位
+
+现有复杂 Excel 版本保留为历史参考，不再作为 HTML 正式生产依赖。
+
+如未来需要 Excel，只生成简化数据底表，并与 HTML 一样消费 Canonical/report_data，不反向驱动 HTML。

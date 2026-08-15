@@ -43,14 +43,6 @@ def _request_json(url: str, params: dict) -> dict:
 
 
 def _index_current_quote(target_date: str, definition: dict[str, str]) -> dict[str, object]:
-    """Current-day quote for one index with hard HTTP timeouts.
-
-    Eastmoney's quote endpoint exposes latest price (f43), daily percentage
-    change (f170) and turnover amount (f48) for any known secid, including the
-    Choice micro-cap index secid 47.800007. Daily production only targets the
-    current China trading date, so a current quote is sufficient and avoids a
-    slow historical request in the critical path.
-    """
     payload = _request_json(
         EM_INDEX_QUOTE_URL,
         {
@@ -80,10 +72,8 @@ def _index_current_quote(target_date: str, definition: dict[str, str]) -> dict[s
 
 
 def fetch_indices_resilient(target_date: str, definitions: list[dict[str, str]]):
-    """Parallel current quotes, then bounded historical fallback only for failures."""
     primary: dict[str, dict[str, object]] = {}
     failed: list[dict[str, str]] = []
-
     with ThreadPoolExecutor(max_workers=max(1, len(definitions))) as executor:
         future_map = {
             executor.submit(_index_current_quote, target_date, definition): definition
@@ -98,8 +88,6 @@ def fetch_indices_resilient(target_date: str, definitions: list[dict[str, str]])
 
     fallback_map: dict[str, dict[str, object]] = {}
     if failed:
-        # Legacy K-line collector already has connect/read hard timeouts and its
-        # own two attempts. Do not add another outer retry: keep the daily path bounded.
         fallback = fetch_indices_legacy(target_date, failed)
         fallback_map = {str(item.get("name")): item for item in fallback}
 
@@ -123,13 +111,6 @@ def fetch_indices_resilient(target_date: str, definitions: list[dict[str, str]])
 
 
 def fetch_innovation_current_reliable(target_date: str):
-    """Direct BK1106 board quote with real supplier turnover and hard timeout.
-
-    AKShare's stock_board_concept_spot_em implementation maps the same Eastmoney
-    fields: f48=成交额, f170=涨跌幅, f168=换手率. With fltt=1, percentage-like
-    fields are returned in 1/100 units, while f48 remains yuan after the AKShare
-    normalization. We normalize both percentage fields to decimal fractions.
-    """
     try:
         payload = _request_json(
             EM_CONCEPT_QUOTE_URL,
@@ -155,8 +136,6 @@ def fetch_innovation_current_reliable(target_date: str):
             "source": "东方财富创新药BK1106轻量板块报价（供应商直接换手率）",
         }
     except Exception:
-        # Returning None lets the pipeline mark the current innovation snapshot as
-        # unavailable. Do not enter an unbounded fallback and do not manufacture a proxy.
         return None
 
 
@@ -174,12 +153,14 @@ def run(
     root: Path = Path("."),
     refresh_mapping: bool = False,
 ):
-    """Production entrypoint with bounded current-day quotes in the critical path."""
+    """Production entrypoint with all mutable data scoped to the supplied root."""
+    root = Path(root).resolve()
     pipeline.fetch_a_share_spot = fetch_a_share_spot_fast
-    pipeline.fetch_sw_analysis = load_sw_cache
+    pipeline.fetch_sw_analysis = lambda date: load_sw_cache(
+        date,
+        root / "data/cache/sw_analysis_daily_second.csv",
+    )
     pipeline.fetch_indices = fetch_indices_resilient
-    # Keep the existing Eastmoney BK1106 history updater: it already has hard HTTP
-    # timeouts and preserves its cached history on failure.
     pipeline.fetch_innovation_current_em = fetch_innovation_current_reliable
     pipeline.fetch_innovation_current_ths = _no_ths_current
     pipeline.update_innovation_history_ths = _no_ths_history

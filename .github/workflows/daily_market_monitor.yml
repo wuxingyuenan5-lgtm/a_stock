@@ -13,17 +13,23 @@ on:
         type: boolean
         default: false
       full_refresh_sw_industry:
-        description: "Run slow per-index Shenwan history refresh instead of fast bulk incremental refresh"
+        description: "Run slow per-index Shenwan history refresh inside Canonical staging"
         required: false
         type: boolean
         default: false
   pull_request:
     paths:
       - run_daily.py
+      - run_history_preflight.py
+      - validate_canonical_data.py
+      - build_report_data.py
+      - render_market_monitor_html.py
+      - validate_market_monitor_html.py
       - prepare_render_bundle.py
       - excel_renderer_artifact.py
       - run_excel_renderer.py
       - run_excel_renderer_v14.py
+      - run_excel_renderer_v15.py
       - market_monitor/**
       - update_sw_industry.py
       - update_sw_industry_fast.py
@@ -31,6 +37,8 @@ on:
       - config/market_monitor.json
       - config/excel_renderer.json
       - config/web_production_runtime.json
+      - config/html_production_runtime.json
+      - data/history/hot_stocks.csv
       - requirements.txt
       - .github/workflows/daily_market_monitor.yml
 
@@ -71,12 +79,15 @@ jobs:
             target="$(date +%F)"
           fi
           echo "value=$target" >> "$GITHUB_OUTPUT"
+          echo "compact=${target//-/}" >> "$GITHUB_OUTPUT"
 
       - name: Fast syntax preflight
         run: |
           python -m py_compile \
-            run_daily.py prepare_render_bundle.py excel_renderer_artifact.py \
-            run_excel_renderer.py run_excel_renderer_v14.py \
+            run_daily.py run_history_preflight.py validate_canonical_data.py build_report_data.py \
+            render_market_monitor_html.py validate_market_monitor_html.py \
+            prepare_render_bundle.py excel_renderer_artifact.py \
+            run_excel_renderer.py run_excel_renderer_v14.py run_excel_renderer_v15.py \
             refresh_sw_crowding.py refresh_sw_mapping.py \
             update_sw_industry.py update_sw_industry_fast.py
           python -m py_compile market_monitor/*.py
@@ -85,61 +96,105 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python -m unittest discover -s tests -v
 
-      - name: Refresh Shenwan crowding cache once
+      - name: Build 2026-08-14 HTML acceptance prototype on PR
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          python run_history_preflight.py --target-date "2026-08-14"
+          python validate_canonical_data.py \
+            --target-date "2026-08-14" \
+            --output "output/2026-08-14/canonical_validation.json"
+          python build_report_data.py --target-date "2026-08-14"
+          python render_market_monitor_html.py \
+            --input "output/2026-08-14/report_data.json" \
+            --output "output/2026-08-14/A股每日市场监控_20260814.html"
+          python validate_market_monitor_html.py \
+            --data "output/2026-08-14/report_data.json" \
+            --html "output/2026-08-14/A股每日市场监控_20260814.html" \
+            --output "output/2026-08-14/html_validation.json"
+
+      - name: Upload 2026-08-14 HTML acceptance prototype
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-prototype-2026-08-14
+          path: |
+            output/2026-08-14/A股每日市场监控_20260814.html
+            output/2026-08-14/report_data.json
+            output/2026-08-14/canonical_manifest.json
+            output/2026-08-14/canonical_validation.json
+            output/2026-08-14/html_validation.json
+            output/2026-08-14/history_preflight.json
+            data/history/indices_history.csv
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: History preflight and recoverable backfill
         if: github.event_name != 'pull_request'
-        run: python refresh_sw_crowding.py
+        run: python run_history_preflight.py --target-date "${{ steps.date.outputs.value }}"
 
       - name: Produce normalized payload
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          extra=""
+          args=""
           if [ "${{ inputs.refresh_mapping }}" = "true" ]; then
-            extra="--refresh-mapping"
+            args="$args --refresh-mapping"
           fi
-          python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
-
-      - name: Refresh Shenwan industry snapshot
-        if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          target="${{ steps.date.outputs.value }}"
-          today="$(date +%F)"
           if [ "${{ inputs.full_refresh_sw_industry }}" = "true" ]; then
-            echo "Running full Shenwan history refresh"
-            python update_sw_industry.py --history-rows 260 --workers 4 --sleep-seconds 0.15 \
-              || echo "::warning::Full Shenwan refresh failed; renderer will use the last validated cached snapshot."
-          elif [ "$target" = "$today" ]; then
-            echo "Running fast bulk Shenwan incremental refresh"
-            python update_sw_industry_fast.py --target-date "$target" \
-              || echo "::warning::Fast Shenwan refresh failed; renderer will use the last validated cached snapshot."
-          else
-            echo "::notice::Historical target date; skip realtime Shenwan refresh and use validated cache."
+            args="$args --full-refresh-sw-industry"
           fi
+          python run_daily.py --target-date "${{ steps.date.outputs.value }}" $args
 
-      - name: Prepare self-contained web renderer bundle
+      - name: Validate Canonical data
         if: github.event_name != 'pull_request'
-        run: python prepare_render_bundle.py --target-date "${{ steps.date.outputs.value }}"
+        run: |
+          python validate_canonical_data.py \
+            --target-date "${{ steps.date.outputs.value }}" \
+            --output "output/${{ steps.date.outputs.value }}/canonical_validation.json"
 
-      - name: Write latest bundle pointer
+      - name: Build normalized report data
+        if: github.event_name != 'pull_request'
+        run: python build_report_data.py --target-date "${{ steps.date.outputs.value }}"
+
+      - name: Render offline HTML
+        if: github.event_name != 'pull_request'
+        run: |
+          python render_market_monitor_html.py \
+            --input "output/${{ steps.date.outputs.value }}/report_data.json" \
+            --output "output/${{ steps.date.outputs.value }}/A股每日市场监控_${{ steps.date.outputs.compact }}.html"
+
+      - name: Validate HTML
+        if: github.event_name != 'pull_request'
+        run: |
+          python validate_market_monitor_html.py \
+            --data "output/${{ steps.date.outputs.value }}/report_data.json" \
+            --html "output/${{ steps.date.outputs.value }}/A股每日市场监控_${{ steps.date.outputs.compact }}.html" \
+            --output "output/${{ steps.date.outputs.value }}/html_validation.json"
+
+      - name: Write latest HTML pointer
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
           python - <<'PY'
           import json, os
           from pathlib import Path
-
           d = "${{ steps.date.outputs.value }}"
-          manifest = json.loads(Path(f"output/{d}/render_bundle_manifest.json").read_text(encoding="utf-8"))
+          compact = "${{ steps.date.outputs.compact }}"
+          html_validation = json.loads(Path(f"output/{d}/html_validation.json").read_text(encoding="utf-8"))
+          canonical_validation = json.loads(Path(f"output/{d}/canonical_validation.json").read_text(encoding="utf-8"))
           pointer = {
               "date": d,
               "run_id": int(os.environ["GITHUB_RUN_ID"]),
-              "artifact_name": f"a-share-monitor-{d}",
-              "renderer_version": manifest["renderer_version"],
-              "expected_mother_date": manifest["mother_policy"]["expected_mother_date"],
-              "expected_mother_filename": manifest["mother_policy"]["expected_mother_filename"],
-              "runtime_manifest": "config/web_production_runtime.json",
-              "workflow": "daily_market_monitor.yml",
+              "artifact_name": f"a-share-monitor-html-{d}",
+              "primary_file": f"A股每日市场监控_{compact}.html",
+              "data_contract": "report_data.json",
+              "canonical_validation_file": "canonical_validation.json",
+              "canonical_validation_status": canonical_validation["status"],
+              "validation_file": "html_validation.json",
+              "validation_status": html_validation["status"],
+              "runtime_manifest": "config/html_production_runtime.json",
+              "workflow": "daily_market_monitor.yml"
           }
           Path("data/latest_bundle_pointer.json").write_text(
               json.dumps(pointer, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -147,16 +202,23 @@ jobs:
           print(json.dumps(pointer, ensure_ascii=False))
           PY
 
-      - name: Upload production artifact
+      - name: Upload HTML production artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: a-share-monitor-${{ steps.date.outputs.value }}
-          path: output/${{ steps.date.outputs.value }}/
+          name: a-share-monitor-html-${{ steps.date.outputs.value }}
+          path: |
+            output/${{ steps.date.outputs.value }}/A股每日市场监控_${{ steps.date.outputs.compact }}.html
+            output/${{ steps.date.outputs.value }}/report_data.json
+            output/${{ steps.date.outputs.value }}/canonical_manifest.json
+            output/${{ steps.date.outputs.value }}/canonical_validation.json
+            output/${{ steps.date.outputs.value }}/html_validation.json
+            output/${{ steps.date.outputs.value }}/history_preflight.json
+            output/${{ steps.date.outputs.value }}/source_manifest.json
           if-no-files-found: error
           retention-days: 30
 
-      - name: Persist histories, snapshots, JSON archive, and latest pointer
+      - name: Persist histories, snapshots, HTML archive, and latest pointer
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
@@ -166,11 +228,12 @@ jobs:
             data/history data/cache \
             data/sw_industry_history.csv data/sw_industry_latest.csv \
             data/latest_bundle_pointer.json \
-            "output/${{ steps.date.outputs.value }}/*.json"
+            "output/${{ steps.date.outputs.value }}/*.json" \
+            "output/${{ steps.date.outputs.value }}/*.html"
           if git diff --cached --quiet; then
             echo "No persistent data changes"
           else
-            git commit -m "data: daily market monitor ${{ steps.date.outputs.value }}"
+            git commit -m "data: daily HTML market monitor ${{ steps.date.outputs.value }}"
             git pull --rebase origin main
             git push
           fi

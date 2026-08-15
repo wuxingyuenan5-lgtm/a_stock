@@ -16,8 +16,6 @@ import akshare as ak
 import pandas as pd
 
 DATA_DIR = Path("data")
-HISTORY_FILE = DATA_DIR / "sw_industry_history.csv"
-LATEST_FILE = DATA_DIR / "sw_industry_latest.csv"
 KEEP_HISTORY_ROWS = 260
 VOL_WINDOW = 20
 ANNUALIZATION_DAYS = 252
@@ -35,7 +33,7 @@ EXPORT_COLUMNS = {
     "daily_return": "日收益率",
     "volatility_20d": "20日年化波动率",
 }
-REVERSE_COLUMNS = {v: k for k, v in EXPORT_COLUMNS.items()}
+REVERSE_COLUMNS = {value: key for key, value in EXPORT_COLUMNS.items()}
 
 
 def strip_suffix(value: object) -> str:
@@ -45,10 +43,10 @@ def strip_suffix(value: object) -> str:
     return text.split(".")[0]
 
 
-def load_existing() -> pd.DataFrame:
-    if not HISTORY_FILE.exists():
-        raise RuntimeError("missing data/sw_industry_history.csv; run full bootstrap first")
-    frame = pd.read_csv(HISTORY_FILE, encoding="utf-8-sig").rename(columns=REVERSE_COLUMNS)
+def load_existing(history_file: Path) -> pd.DataFrame:
+    if not history_file.exists():
+        raise RuntimeError(f"missing {history_file}; run full bootstrap first")
+    frame = pd.read_csv(history_file, encoding="utf-8-sig").rename(columns=REVERSE_COLUMNS)
     required = {
         "date", "level", "level1_code", "level1_name", "index_code",
         "index_name", "close", "amount",
@@ -72,7 +70,6 @@ def fetch_bulk(symbol: str) -> pd.DataFrame:
     out["index_code"] = out["指数代码"].map(strip_suffix)
     out["close"] = pd.to_numeric(out["最新价"], errors="coerce")
     out["prev_close"] = pd.to_numeric(out["昨收盘"], errors="coerce")
-    # AKShare documents this realtime field in CNY million; workbook history uses CNY 100m.
     out["amount"] = pd.to_numeric(out["成交额"], errors="coerce") / 100.0
     return out[["index_code", "close", "prev_close", "amount"]].dropna(
         subset=["index_code", "close"]
@@ -87,13 +84,15 @@ def calculate_metrics(data: pd.DataFrame) -> pd.DataFrame:
     )
     data["daily_return"] = data.groupby("index_code")["close"].pct_change(fill_method=None)
     data["volatility_20d"] = data.groupby("index_code")["daily_return"].transform(
-        lambda s: s.rolling(VOL_WINDOW, min_periods=VOL_WINDOW).std(ddof=1)
+        lambda series: series.rolling(VOL_WINDOW, min_periods=VOL_WINDOW).std(ddof=1)
         * math.sqrt(ANNUALIZATION_DAYS)
     )
     return data.groupby("index_code", group_keys=False).tail(KEEP_HISTORY_ROWS)
 
 
-def write_outputs(data: pd.DataFrame) -> None:
+def write_outputs(data: pd.DataFrame, history_file: Path, latest_file: Path) -> None:
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    latest_file.parent.mkdir(parents=True, exist_ok=True)
     columns = [
         "date", "level", "level1_code", "level1_name", "index_code",
         "index_name", "close", "amount", "daily_return", "volatility_20d",
@@ -102,7 +101,7 @@ def write_outputs(data: pd.DataFrame) -> None:
         ["date", "level", "level1_name", "index_name"]
     ).rename(columns=EXPORT_COLUMNS)
     exported["日期"] = pd.to_datetime(exported["日期"]).dt.strftime("%Y-%m-%d")
-    exported.to_csv(HISTORY_FILE, index=False, encoding="utf-8-sig", float_format="%.8f")
+    exported.to_csv(history_file, index=False, encoding="utf-8-sig", float_format="%.8f")
 
     latest = (
         data.sort_values("date")
@@ -112,11 +111,14 @@ def write_outputs(data: pd.DataFrame) -> None:
         .rename(columns=EXPORT_COLUMNS)
     )
     latest["日期"] = pd.to_datetime(latest["日期"]).dt.strftime("%Y-%m-%d")
-    latest.to_csv(LATEST_FILE, index=False, encoding="utf-8-sig", float_format="%.8f")
+    latest.to_csv(latest_file, index=False, encoding="utf-8-sig", float_format="%.8f")
 
 
-def update(target_date: str) -> dict[str, object]:
-    existing = load_existing()
+def update(target_date: str, data_dir: Path = DATA_DIR) -> dict[str, object]:
+    data_dir = Path(data_dir)
+    history_file = data_dir / "sw_industry_history.csv"
+    latest_file = data_dir / "sw_industry_latest.csv"
+    existing = load_existing(history_file)
     metadata = (
         existing.sort_values("date")
         .groupby("index_code", as_index=False, group_keys=False)
@@ -139,22 +141,16 @@ def update(target_date: str) -> dict[str, object]:
         )
 
     fresh["date"] = pd.Timestamp(target_date)
-    fresh = fresh[
-        [
-            "date", "level", "level1_code", "level1_name", "index_code",
-            "index_name", "close", "amount",
-        ]
-    ]
-
-    base = existing[
-        [
-            "date", "level", "level1_code", "level1_name", "index_code",
-            "index_name", "close", "amount",
-        ]
-    ]
-    combined = pd.concat([base, fresh], ignore_index=True)
-    data = calculate_metrics(combined)
-    write_outputs(data)
+    fresh = fresh[[
+        "date", "level", "level1_code", "level1_name", "index_code",
+        "index_name", "close", "amount",
+    ]]
+    base = existing[[
+        "date", "level", "level1_code", "level1_name", "index_code",
+        "index_name", "close", "amount",
+    ]]
+    data = calculate_metrics(pd.concat([base, fresh], ignore_index=True))
+    write_outputs(data, history_file, latest_file)
 
     target_rows = int((pd.to_datetime(data["date"]).dt.strftime("%Y-%m-%d") == target_date).sum())
     result = {
@@ -164,6 +160,7 @@ def update(target_date: str) -> dict[str, object]:
         "updated_indices": int(len(fresh)),
         "coverage": round(coverage, 6),
         "target_date_rows": target_rows,
+        "data_dir": str(data_dir),
     }
     print(result)
     return result
@@ -172,8 +169,9 @@ def update(target_date: str) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fast daily Shenwan industry refresh")
     parser.add_argument("--target-date", required=True, help="YYYY-MM-DD")
+    parser.add_argument("--data-dir", default="data")
     args = parser.parse_args()
-    update(args.target_date)
+    update(args.target_date, Path(args.data_dir))
 
 
 if __name__ == "__main__":
