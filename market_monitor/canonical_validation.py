@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .canonical_store import CANONICAL_TABLES, audit_table, diff_history, read_csv_rows
+from .canonical_store import CANONICAL_TABLES, audit_table, diff_history, read_csv_rows, row_key
 
 
 def _num(value):
@@ -12,6 +12,10 @@ def _num(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _blank(value) -> bool:
+    return value is None or str(value).strip() == ""
 
 
 def validate_candidate(
@@ -36,6 +40,28 @@ def validate_candidate(
             failures.append(f"duplicate_key:{name}")
         if before and len(after) < len(before) * 0.90:
             failures.append(f"mass_history_deletion:{name}:{len(before)}->{len(after)}")
+
+        before_map = {row_key(row, spec): row for row in before}
+        after_map = {row_key(row, spec): row for row in after}
+        for key, previous in before_map.items():
+            row_date = str(previous.get(spec.date_field) or "")[:10]
+            if not row_date or row_date > target_date:
+                continue
+            label = ":".join(key)
+            current = after_map.get(key)
+            if current is None:
+                prefix = "historical_key_deleted" if row_date < target_date else "target_key_deleted"
+                failures.append(f"{prefix}:{name}:{label}")
+                continue
+            for field, old_value in previous.items():
+                if field in spec.key_fields or _blank(old_value):
+                    continue
+                new_value = current.get(field)
+                if _blank(new_value):
+                    prefix = "historical_non_null_erased" if row_date < target_date else "target_non_null_erased"
+                    failures.append(f"{prefix}:{name}:{label}:{field}")
+                elif str(new_value) != str(old_value) and row_date < target_date:
+                    warnings.append(f"historical_value_changed:{name}:{label}:{field}")
 
     market_spec = CANONICAL_TABLES["market_core"]
     market_rows = sorted(
@@ -74,9 +100,7 @@ def validate_candidate(
         if previous_amount is not None and previous_amount > 0:
             ratio = amount / previous_amount
             if ratio < 0.35 or ratio > 2.8:
-                warnings.append(
-                    f"market_turnover_jump:{previous_date}->{row_date}:{ratio:.4f}"
-                )
+                warnings.append(f"market_turnover_jump:{previous_date}->{row_date}:{ratio:.4f}")
         previous_date = row_date
         previous_amount = amount
 
@@ -90,7 +114,5 @@ def validate_candidate(
         "failures": failures,
         "warnings": warnings,
         "tables": tables,
-        "cross_checks": {
-            "market_rows_checked": len(market_rows),
-        },
+        "cross_checks": {"market_rows_checked": len(market_rows)},
     }
