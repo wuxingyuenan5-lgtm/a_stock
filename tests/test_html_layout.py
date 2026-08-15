@@ -29,6 +29,18 @@ class HtmlLayoutContractTest(unittest.TestCase):
         for label in ("市场核心", "三项指数", "申万行业", "四行业拥挤度", "创新药"):
             self.assertIn(label, html)
 
+    def test_business_module_numbering_matches_the_cleaned_monitor_contract(self):
+        html = render_html(self._report())
+        self.assertIn("00｜市场总览 · 市场涨跌结构", html)
+        self.assertIn("00｜市场总览 · 市场宽度", html)
+        self.assertIn("00｜市场总览 · 最近交易日指数与成交", html)
+        self.assertIn("01｜申万行业", html)
+        self.assertIn("04｜百亿成交", html)
+        self.assertIn("05｜申万四行业资金拥挤度", html)
+        self.assertIn("06｜创新药交易拥挤度", html)
+        self.assertIn("99｜数据质量", html)
+        self.assertNotIn("07｜创新药交易拥挤度", html)
+
 
 if __name__ == "__main__":
     unittest.main()
