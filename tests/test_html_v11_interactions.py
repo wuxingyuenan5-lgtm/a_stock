@@ -38,7 +38,7 @@ class HtmlV11InteractionsTest(unittest.TestCase):
 
     def test_every_time_chart_has_full_history_range_controls(self):
         html=render_html(self._report())
-        count=html.count('data-time-chart="1"')
+        count=html.count('<div class="time-chart" data-time-chart="1"')
         self.assertGreaterEqual(count, 6)
         self.assertEqual(html.count('class="time-range-start"'), count)
         self.assertEqual(html.count('class="time-range-end"'), count)
