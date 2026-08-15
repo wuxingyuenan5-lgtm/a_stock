@@ -39,7 +39,7 @@ class HtmlTimeControlsTest(unittest.TestCase):
 
     def test_every_time_chart_has_dual_range_controls(self):
         html = render_html(self._report())
-        charts = html.count('data-time-chart="1"')
+        charts = html.count('<div class="time-chart" data-time-chart="1"')
         self.assertGreaterEqual(charts, 6)
         self.assertEqual(html.count('class="time-range-start"'), charts)
         self.assertEqual(html.count('class="time-range-end"'), charts)
