@@ -9,6 +9,7 @@ from .collectors import fetch_eastmoney_index, _fetch_em_klines
 
 INDEX_NAMES = ("上证50", "Choice微盘", "中证全指")
 INDEX_FIELDS = ("date", "name", "code", "close", "return", "amount_100m", "source", "status")
+MAX_SPARSE_FALLBACK_DATES = 5
 
 
 def _float(value):
@@ -165,17 +166,20 @@ def scan_history_gaps(root: Path, report_date: str, required_index_dates: list[s
 
 
 def preflight_history(root: Path, report_date: str, definitions: list[dict[str, str]], repair_indices: bool = True) -> dict[str, object]:
-    """Scan history, bulk-bootstrap large index gaps, then use sparse date repairs."""
+    """Scan history, bulk-bootstrap large index gaps, then bounded sparse repairs."""
     before = scan_history_gaps(root, report_date)
     path = root / "data" / "history" / "indices_history.csv"
+    had_large_gap = False
     if repair_indices and before["indices"]:
         missing_dates = sorted({item["date"] for item in before["indices"]})
-        # Many missing dates are a bootstrap/migration problem. One range request per
-        # index is dramatically faster and more reliable than date×index requests.
         if len(missing_dates) >= 4:
+            had_large_gap = True
             append_index_history(path, backfill_index_range(missing_dates[0], missing_dates[-1], definitions))
         middle = scan_history_gaps(root, report_date)
-        for d in sorted({item["date"] for item in middle["indices"]}):
+        sparse_dates = sorted({item["date"] for item in middle["indices"]})
+        if had_large_gap:
+            sparse_dates = sparse_dates[-MAX_SPARSE_FALLBACK_DATES:]
+        for d in sparse_dates:
             missing_names = {item["name"] for item in middle["indices"] if item["date"] == d}
             defs = [item for item in definitions if item["name"] in missing_names]
             if defs:
