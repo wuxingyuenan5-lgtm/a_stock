@@ -32,17 +32,24 @@ def validate_candidate(
         canonical_path = canonical_root / spec.path
         before = read_csv_rows(canonical_path)
         after = read_csv_rows(candidate_path)
+        before_map = {row_key(row, spec): row for row in before}
+        after_map = {row_key(row, spec): row for row in after}
         audit = audit_table(candidate_path, spec)
         change = diff_history(before, after, spec, target_date)
-        tables[name] = {**audit, **change}
+        tables[name] = {
+            **audit,
+            **change,
+            "previous_row_count": len(before),
+            "previous_unique_key_count": len(before_map),
+        }
 
         if audit["duplicate_key_count"]:
             failures.append(f"duplicate_key:{name}")
-        if before and len(after) < len(before) * 0.90:
-            failures.append(f"mass_history_deletion:{name}:{len(before)}->{len(after)}")
+        if before_map and len(after_map) < len(before_map) * 0.90:
+            failures.append(
+                f"mass_history_deletion:{name}:keys:{len(before_map)}->{len(after_map)}"
+            )
 
-        before_map = {row_key(row, spec): row for row in before}
-        after_map = {row_key(row, spec): row for row in after}
         for key, previous in before_map.items():
             row_date = str(previous.get(spec.date_field) or "")[:10]
             if not row_date or row_date > target_date:
