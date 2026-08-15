@@ -12,7 +12,7 @@
 
 - Final HTML must remain one offline self-contained file with no external JS/CSS/CDN dependency.
 - Every date-series chart defaults to full history.
-- Every date-series chart must expose a dual-handle time slider; dragging either edge or the selected window updates axes and data.
+- Every date-series chart must expose a dual-handle time slider; dragging either edge updates the selected range, and the selected range can be restored to full history with an explicit `全部` control.
 - Tooltip must show date, metric name, value and unit.
 - Legends and axis units must make each series unambiguous.
 - Shenwan `成交额`, `日收益率`, `20日年化波动率` sort states cycle original → descending → ascending → original.
@@ -61,18 +61,31 @@ Expected: FAIL because matrix defaults to 6 ascending dates and `hot_stocks_hist
 
 ```python
 def build_hot_stock_matrix(rows, recent_dates=10, named_max=13, newest_first=True):
-    dates = sorted({str(r["date"]) for r in rows})[-recent_dates:]
-    if newest_first:
-        dates = list(reversed(dates))
-    ...
+    dates=sorted({str(r["date"]) for r in rows})[-recent_dates:]
+    if newest_first: dates=list(reversed(dates))
+    cumulative={}; counts={d:{} for d in dates}
+    for row in rows:
+        industry=str(row.get("sw_level2") or "待申万映射")
+        if industry in ("","未匹配"): industry="待申万映射"
+        cumulative[industry]=cumulative.get(industry,0)+1
+        d=str(row.get("date") or "")
+        if d in counts: counts[d][industry]=counts[d].get(industry,0)+1
+    named=sorted(cumulative,key=lambda x:(-cumulative[x],x))[:named_max]
+    overflow=set(cumulative)-set(named); matrix_rows=[]
+    for industry in named:
+        matrix_rows.append({"industry":industry,"counts":[counts[d].get(industry,0) for d in dates],"history_total":cumulative[industry]})
+    if overflow:
+        matrix_rows.append({"industry":"其他行业汇总","counts":[sum(counts[d].get(i,0) for i in overflow) for d in dates],"history_total":sum(cumulative[i] for i in overflow)})
+    return {"dates":dates,"rows":matrix_rows}
+```
 
-# report contract
-"hot_stock_matrix": matrix,
+Add these fields to the report object:
+
+```python
+"hot_stock_matrix": build_hot_stock_matrix(hot_all),
 "hot_stocks_history": hot_all,
 "hot_stocks_latest": latest_hot,
 ```
-
-Counts must be computed using the date positions actually returned by `matrix["dates"]`; no later reversal in the HTML renderer.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -98,38 +111,39 @@ git commit -m "feat: separate hot-stock history from ten-day display matrix"
 
 **Interfaces:**
 - Produces browser function: `mountTimeChart(element, config)`
-- `config` shape:
+- Example config:
 
 ```javascript
 {
-  dates: ["2026-01-05", ...],
-  series: [{name:"市场宽度", values:[...], kind:"line|area|bar", axis:"left|right", unit:"%|家"}],
-  leftAxis: {title:"上涨/下跌家数", unit:"家"},
-  rightAxis: {title:"涨停/跌停家数", unit:"家"},
-  zeroLine: true
+  dates:["2026-08-13","2026-08-14"],
+  series:[{name:"市场宽度",values:[-0.5861,-0.1091],kind:"line",axis:"left",unit:"%"}],
+  leftAxis:{title:"市场宽度",unit:"%"},
+  rightAxis:null,
+  zeroLine:true
 }
 ```
 
-- Each chart wrapper must include `.time-range-start`, `.time-range-end`, `.time-range-label`, and `.time-range-all`.
+- Each chart wrapper includes `.time-range-start`, `.time-range-end`, `.time-range-label`, `.time-range-all`.
 
 - [ ] **Step 1: Write failing HTML contract tests**
 
 ```python
 class HtmlTimeControlsTest(unittest.TestCase):
     def test_every_time_chart_has_dual_range_and_defaults_full_history(self):
-        html = render_html(self.report)
-        self.assertGreaterEqual(html.count('data-time-chart="1"'), 4)
-        self.assertEqual(html.count('class="time-range-start"'), html.count('data-time-chart="1"'))
-        self.assertEqual(html.count('class="time-range-end"'), html.count('data-time-chart="1"'))
-        self.assertIn('start.value="0"', html)
-        self.assertIn('end.value=String(dates.length-1)', html)
-        self.assertIn('class="time-range-all"', html)
+        html=render_html(self.report)
+        charts=html.count('data-time-chart="1"')
+        self.assertGreaterEqual(charts,6)
+        self.assertEqual(html.count('class="time-range-start"'),charts)
+        self.assertEqual(html.count('class="time-range-end"'),charts)
+        self.assertIn('start.value="0"',html)
+        self.assertIn('end.value=String(Math.max(0,dates.length-1))',html.replace(" ",""))
+        self.assertEqual(html.count('class="time-range-all"'),charts)
 
     def test_final_html_inlines_runtime_without_network_dependency(self):
-        html = render_html(self.report)
-        self.assertIn("function mountTimeChart", html)
-        self.assertNotIn("<script src=", html)
-        self.assertNotIn("https://", html.lower())
+        html=render_html(self.report)
+        self.assertIn("function mountTimeChart",html)
+        self.assertNotIn("<script src=",html)
+        self.assertNotIn("https://",html.lower())
 ```
 
 - [ ] **Step 2: Run RED**
@@ -138,48 +152,39 @@ Run: `python -m unittest tests.test_html_time_controls -v`
 
 Expected: FAIL because current charts are static SVG.
 
-- [ ] **Step 3: Implement generic JS chart runtime**
-
-The runtime must:
+- [ ] **Step 3: Implement generic JavaScript time-window runtime**
 
 ```javascript
-function mountTimeChart(el, config) {
-  const dates = config.dates || [];
-  const start = el.querySelector('.time-range-start');
-  const end = el.querySelector('.time-range-end');
-  start.min = end.min = "0";
-  start.max = end.max = String(Math.max(0, dates.length - 1));
-  start.value = "0";
-  end.value = String(Math.max(0, dates.length - 1));
-
-  function normalizedWindow() {
-    let a = Number(start.value), b = Number(end.value);
-    if (a > b) [a,b] = [b,a];
-    return [a,b];
+function mountTimeChart(el,config){
+  const dates=config.dates||[];
+  const start=el.querySelector('.time-range-start');
+  const end=el.querySelector('.time-range-end');
+  start.min=end.min="0";
+  start.max=end.max=String(Math.max(0,dates.length-1));
+  start.value="0";
+  end.value=String(Math.max(0,dates.length-1));
+  function windowRange(){
+    let a=Number(start.value),b=Number(end.value);
+    if(a>b){const t=a;a=b;b=t;} return [a,b];
   }
-  function redraw() {
-    const [a,b] = normalizedWindow();
-    drawSvg(el.querySelector('.time-chart-canvas'), config, a, b);
-    el.querySelector('.time-range-label').textContent = dates.length ? `${dates[a]} — ${dates[b]}` : '暂无数据';
+  function redraw(){
+    const [a,b]=windowRange();
+    drawSvg(el.querySelector('.time-chart-canvas'),config,a,b);
+    el.querySelector('.time-range-label').textContent=dates.length?`${dates[a]} — ${dates[b]}`:'暂无数据';
   }
-  start.addEventListener('input', redraw);
-  end.addEventListener('input', redraw);
-  el.querySelector('.time-range-all').addEventListener('click', () => {
-    start.value="0"; end.value=String(Math.max(0,dates.length-1)); redraw();
-  });
+  start.addEventListener('input',redraw); end.addEventListener('input',redraw);
+  el.querySelector('.time-range-all').addEventListener('click',()=>{start.value="0";end.value=String(Math.max(0,dates.length-1));redraw();});
   redraw();
 }
 ```
 
-`drawSvg()` must recalculate x/y domains from the selected `[a,b]` range, render line/area/bar kinds, legends, axis titles/units, and point/segment `<title>` tooltip text. For an `area` series, fill the polygon down to the chart baseline with translucent fill and draw a solid outline.
+Implement `drawSvg(container,config,a,b)` to slice every series to `[a,b]`, recalculate left/right numeric domains from visible values, render SVG line/area/bar shapes, render a visible legend and y-axis titles, and attach `<title>` to every visible point/bar with `date + series.name + formatted value + unit`. Area series close their polygon to the plot baseline and use translucent fill plus a solid outline.
 
-- [ ] **Step 4: Replace static time-SVG functions with semantic chart mounts**
-
-`render_market_monitor_html.py` should read `assets/market_monitor_charts.js` and inline its content inside `<script>...</script>`. Add a helper:
+- [ ] **Step 4: Replace static time-SVG calls with semantic chart mounts**
 
 ```python
 def _time_chart(chart_id: str, config: dict) -> str:
-    payload = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+    payload=json.dumps(config,ensure_ascii=False).replace("</","<\\/")
     return f'''<div class="time-chart" data-time-chart="1" id="{chart_id}">
       <div class="time-chart-canvas"></div>
       <div class="time-range"><input class="time-range-start" type="range"><input class="time-range-end" type="range">
@@ -188,7 +193,7 @@ def _time_chart(chart_id: str, config: dict) -> str:
     </div>'''
 ```
 
-At page initialization, call `mountTimeChart()` for every `[data-time-chart="1"]` element.
+Read `assets/market_monitor_charts.js` at render time and inline it. Initialization must parse each `.time-chart-config` and call `mountTimeChart()` for every `[data-time-chart="1"]`.
 
 - [ ] **Step 5: Run focused tests**
 
@@ -213,7 +218,7 @@ git commit -m "feat: add full-history interactive time sliders"
 
 **Interfaces:**
 - Sortable headers carry `data-sort-key="amount|return|volatility"` and `data-sort-state="original|desc|asc"`.
-- Every industry row carries `data-original-index` plus numeric `data-amount`, `data-return`, `data-volatility` attributes.
+- Every industry row carries `data-original-index`, `data-amount`, `data-return`, `data-volatility`.
 
 - [ ] **Step 1: Write failing sorting-contract tests**
 
@@ -222,50 +227,54 @@ class ShenwanSortingTest(unittest.TestCase):
     def test_three_columns_have_tri_state_sort_controls(self):
         html=render_html(self.report)
         for key in ("amount","return","volatility"):
-            self.assertIn(f'data-sort-key="{key}"', html)
-        self.assertIn("const cycle={original:'desc',desc:'asc',asc:'original'}", html.replace(" ",""))
-        self.assertIn("data-original-index=", html)
+            self.assertIn(f'data-sort-key="{key}"',html)
+        compact=html.replace(" ","")
+        self.assertIn("constcycle={original:'desc',desc:'asc',asc:'original'}",compact)
+        self.assertIn("data-original-index=",html)
 ```
 
 - [ ] **Step 2: Run RED**
 
 Run: `python -m unittest tests.test_sw_industry_sorting -v`
 
-Expected: FAIL because current table has filtering but no tri-state sort metadata/runtime.
+Expected: FAIL because current table has filtering but no tri-state sorting.
 
-- [ ] **Step 3: Add stable original-order metadata and clickable headers**
-
-Rows must preserve input order exactly:
+- [ ] **Step 3: Add stable original-order row metadata**
 
 ```python
-for original_index, row in enumerate(sw_rows):
-    attrs = (
-        f'data-original-index="{original_index}" '
-        f'data-amount="{row.get("成交额") if row.get("成交额") is not None else ""}" '
-        f'data-return="{row.get("日收益率") if row.get("日收益率") is not None else ""}" '
-        f'data-volatility="{row.get("20日年化波动率") if row.get("20日年化波动率") is not None else ""}"'
-    )
+for original_index,row in enumerate(sw_rows):
+    amount="" if row.get("成交额") is None else row["成交额"]
+    ret="" if row.get("日收益率") is None else row["日收益率"]
+    vol="" if row.get("20日年化波动率") is None else row["20日年化波动率"]
+    attrs=(f'data-original-index="{original_index}" data-amount="{amount}" '
+           f'data-return="{ret}" data-volatility="{vol}"')
 ```
 
-- [ ] **Step 4: Add client-side state machine compatible with filters/search**
+Render sortable `<button>` elements in the three relevant `<th>` cells with `data-sort-state="original"`.
+
+- [ ] **Step 4: Add tri-state client sorting compatible with search/filter**
 
 ```javascript
 const cycle={original:'desc',desc:'asc',asc:'original'};
 function sortSwRows(key,state){
+  const tbody=document.querySelector('#sw-industry-table tbody');
   const rows=[...tbody.querySelectorAll('tr[data-original-index]')];
   rows.sort((a,b)=>{
     if(state==='original') return Number(a.dataset.originalIndex)-Number(b.dataset.originalIndex);
-    const av=Number(a.dataset[key]), bv=Number(b.dataset[key]);
-    if(!Number.isFinite(av) && !Number.isFinite(bv)) return Number(a.dataset.originalIndex)-Number(b.dataset.originalIndex);
-    if(!Number.isFinite(av)) return 1; if(!Number.isFinite(bv)) return -1;
-    return state==='desc' ? bv-av : av-bv;
+    const av=Number(a.dataset[key]),bv=Number(b.dataset[key]);
+    const aok=a.dataset[key]!==''&&Number.isFinite(av),bok=b.dataset[key]!==''&&Number.isFinite(bv);
+    if(!aok&&!bok) return Number(a.dataset.originalIndex)-Number(b.dataset.originalIndex);
+    if(!aok) return 1; if(!bok) return -1;
+    return state==='desc'?bv-av:av-bv;
   });
-  rows.forEach(r=>tbody.appendChild(r));
-  applySwFilters();
+  rows.forEach(r=>tbody.appendChild(r)); applySwFilters();
 }
+document.querySelectorAll('[data-sort-key]').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('[data-sort-key]').forEach(other=>{if(other!==btn) other.dataset.sortState='original';});
+  btn.dataset.sortState=cycle[btn.dataset.sortState||'original'];
+  sortSwRows(btn.dataset.sortKey,btn.dataset.sortState);
+}));
 ```
-
-Only one header is the active sort field; changing fields resets the previously active header to `original`.
 
 - [ ] **Step 5: Run tests**
 
@@ -294,15 +303,15 @@ git commit -m "feat: add tri-state Shenwan industry sorting"
 - 06 chart IDs: `innovation-share-chart`, `innovation-turnover-chart`
 - Amount-share series use `kind:"area"`; turnover series use `kind:"line"`.
 
-- [ ] **Step 1: Write failing layout/chart tests**
+- [ ] **Step 1: Write failing chart/layout tests**
 
 ```python
 class CrowdingChartTest(unittest.TestCase):
     def test_sw_share_is_area_and_turnover_is_line(self):
         html=render_html(self.report)
         self.assertIn('id="sw-share-chart"',html)
-        self.assertIn('"kind": "area"',html)
         self.assertIn('id="sw-turnover-chart"',html)
+        self.assertIn('"name": "通信设备成交额占全A"',html)
         self.assertIn('"name": "通信设备换手率"',html)
         self.assertNotIn("四行业成交额合计",html)
 
@@ -318,37 +327,34 @@ class CrowdingChartTest(unittest.TestCase):
 
 Run: `python -m unittest tests.test_crowding_charts tests.test_html_layout -v`
 
-Expected: FAIL on current dual-line charts/combined presentation.
+Expected: FAIL on current dual-line/combined presentation.
 
-- [ ] **Step 3: Build 05 configs with four explicitly named series**
-
-Share chart:
+- [ ] **Step 3: Build explicit 05 area and line configs**
 
 ```python
-{
-  "dates": dates,
-  "leftAxis":{"title":"成交额占全A","unit":"%"},
-  "series":[
-    {"name":"通信设备成交额占全A","kind":"area","axis":"left","unit":"%","values":...},
-    {"name":"计算机设备成交额占全A","kind":"area","axis":"left","unit":"%","values":...},
-    {"name":"元件成交额占全A","kind":"area","axis":"left","unit":"%","values":...},
-    {"name":"半导体成交额占全A","kind":"area","axis":"left","unit":"%","values":...},
-  ]
-}
+industries=["通信设备","计算机设备","元件","半导体"]
+dates=[row["date"] for row in sw_history]
+share_series=[]; turnover_series=[]
+for industry in industries:
+    share_values=[(row.get("targets") or {}).get(industry,{}).get("amount_share_of_a") for row in sw_history]
+    turnover_values=[(row.get("targets") or {}).get(industry,{}).get("turnover") for row in sw_history]
+    share_series.append({"name":f"{industry}成交额占全A","kind":"area","axis":"left","unit":"%","values":share_values})
+    turnover_series.append({"name":f"{industry}换手率","kind":"line","axis":"left","unit":"%","values":turnover_values})
+sw_share={"dates":dates,"leftAxis":{"title":"成交额占全A","unit":"%"},"rightAxis":None,"zeroLine":False,"series":share_series}
+sw_turnover={"dates":dates,"leftAxis":{"title":"换手率","unit":"%"},"rightAxis":None,"zeroLine":False,"series":turnover_series}
 ```
 
-Turnover chart mirrors the same four industries with `kind:"line"` and y-axis title `换手率`.
+Remove the HTML table/chart labeled `四行业成交额合计`; keep Canonical combined fields only for validation if already present.
 
-Remove the four-industry combined-amount table and combined-amount historical chart from HTML. Do not delete source fields from Canonical if they are useful for validation; this is a presentation removal.
-
-- [ ] **Step 4: Build separate 06 area and line configs**
+- [ ] **Step 4: Build explicit 06 area and line configs**
 
 ```python
-share = {"series":[{"name":"创新药成交额占全A","kind":"area","axis":"left","unit":"%","values":shares}], ...}
-turn = {"series":[{"name":"创新药换手率","kind":"line","axis":"left","unit":"%","values":turnovers}], ...}
+innovation_dates=[row["date"] for row in innovation]
+innovation_share={"dates":innovation_dates,"leftAxis":{"title":"成交额占全A","unit":"%"},"rightAxis":None,"zeroLine":False,
+                  "series":[{"name":"创新药成交额占全A","kind":"area","axis":"left","unit":"%","values":[row.get("amount_share_of_a") for row in innovation]}]}
+innovation_turnover={"dates":innovation_dates,"leftAxis":{"title":"换手率","unit":"%"},"rightAxis":None,"zeroLine":False,
+                     "series":[{"name":"创新药换手率","kind":"line","axis":"left","unit":"%","values":[row.get("turnover") for row in innovation]}]}
 ```
-
-Every tooltip is generated from the explicit `name` and `unit` fields; do not infer meaning from color.
 
 - [ ] **Step 5: Run tests**
 
@@ -381,12 +387,13 @@ git commit -m "feat: clarify crowding charts with area and line views"
 
 ```python
 def test_missing_time_slider_fails(self):
-    result=validate_report(self.report, self.html.replace('class="time-range-start"','class="missing"',1))
+    broken=self.html.replace('class="time-range-start"','class="missing-range-start"',1)
+    result=validate_report(self.report,broken)
     self.assertIn("time_slider_contract_missing",result["failures"])
 
-def test_hot_matrix_must_be_newest_first_and_at_most_ten(self):
+def test_hot_matrix_must_be_newest_first(self):
     broken=copy.deepcopy(self.report)
-    broken["hot_stock_matrix"]["dates"]=["2026-08-01", "2026-08-14"]
+    broken["hot_stock_matrix"]["dates"]=["2026-08-13","2026-08-14"]
     result=validate_report(broken,self.html)
     self.assertIn("hot_matrix_not_newest_first",result["failures"])
 
@@ -403,20 +410,24 @@ Expected: new tests FAIL.
 
 - [ ] **Step 3: Implement HTML v1.1 hard checks**
 
-Add checks for:
+```python
+chart_count=html.count('data-time-chart="1"')
+if chart_count and (html.count('class="time-range-start"')!=chart_count or html.count('class="time-range-end"')!=chart_count):
+    failures.append("time_slider_contract_missing")
+dates=(report.get("hot_stock_matrix") or {}).get("dates") or []
+if len(dates)>10: failures.append("hot_matrix_more_than_ten_dates")
+if dates!=sorted(dates,reverse=True): failures.append("hot_matrix_not_newest_first")
+for key in ("amount","return","volatility"):
+    if f'data-sort-key="{key}"' not in html: failures.append(f"sw_sort_control_missing:{key}")
+if "四行业成交额合计" in html: failures.append("combined_amount_presentation_present")
+if '"kind": "area"' not in html: failures.append("share_area_chart_missing")
+```
 
-- every `data-time-chart="1"` has start/end slider + `全部` reset;
-- at least market structure, market breadth, 05 share, 05 turnover, 06 share, 06 turnover are time charts when data exists;
-- hot matrix has `<=10` dates, sorted descending, first date is latest recorded hot-stock date;
-- three Shenwan sortable keys exist;
-- `20日成交量活跃度代理` remains absent;
-- `四行业成交额合计` presentation text is absent;
-- `kind:"area"` exists for 05/06 share charts;
-- no external HTTP/script/link dependency.
+Keep existing checks for external dependencies, activity proxy, latest market date and hot-stock counts.
 
 - [ ] **Step 4: Update runtime contract**
 
-`config/html_production_runtime.json` must declare:
+Merge these fields into `config/html_production_runtime.json` without deleting Canonical-v2 fields:
 
 ```json
 {
@@ -424,13 +435,11 @@ Add checks for:
   "time_slider_default": "full_history",
   "hot_matrix_default_dates": 10,
   "hot_matrix_order": "newest_left",
-  "sw_sort_cycle": ["original","desc","asc","original"],
+  "sw_sort_cycle": ["original", "desc", "asc", "original"],
   "share_chart_kind": "area",
   "turnover_chart_kind": "line"
 }
 ```
-
-Keep the Canonical v2 fields introduced by the data plan.
 
 - [ ] **Step 5: Run full suite**
 
@@ -440,14 +449,7 @@ Expected: all tests PASS.
 
 - [ ] **Step 6: Produce 2026-08-14 acceptance HTML**
 
-Run the PR acceptance build and verify in the artifact:
-
-- all time charts start at full history and sliders can narrow the range;
-- 01 sorting cycles correctly after search/filter;
-- 04 shows 10 dates newest-left while `hot_stocks.csv` remains full history;
-- 05 has four-industry share area chart + turnover line chart and no combined-amount table;
-- 06 has innovation share area chart + turnover line chart;
-- HTML Validator reports zero failures.
+Run the PR acceptance workflow. Inspect `report_data.json`, HTML and validator JSON to verify: sliders cover all history on initial render; 01 controls expose all three sort fields; 04 has 10 descending dates while `hot_stocks_history` remains complete; 05 has four-industry share area + turnover line and no combined-amount presentation; 06 has share area + turnover line; HTML validator failures are empty.
 
 - [ ] **Step 7: Commit**
 
