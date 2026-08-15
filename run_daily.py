@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import json
 from pathlib import Path
+import shutil
 from zoneinfo import ZoneInfo
 
 from market_monitor.production import run
 from market_monitor.history_preflight import append_index_history
+from market_monitor.canonical_promotion import prepare_stage, promote_candidate
+from market_monitor.canonical_validation import validate_candidate
 from build_report_data import append_hot_stock_history
 
 
@@ -23,6 +27,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _copy_raw_outputs(stage_output: Path, output_dir: Path) -> None:
+    raw_dir = output_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    for path in stage_output.iterdir():
+        if not path.is_file():
+            continue
+        shutil.copy2(path, raw_dir / path.name)
+        # Transitional compatibility: downstream report-data code still reads the
+        # acquisition payload/validation from output/<date>. Canonical business
+        # histories themselves are never read from this copy.
+        shutil.copy2(path, output_dir / path.name)
+
+
 def main() -> None:
     args = parse_args()
     today = default_date()
@@ -31,19 +48,45 @@ def main() -> None:
             f"daily pipeline uses a current-day stock snapshot, so target_date must be {today}; "
             "use the historical backfill workflow for older dates"
         )
-    result = run(target_date=args.target_date, config_path=Path(args.config), refresh_mapping=args.refresh_mapping)
+
+    repo_root = Path(".").resolve()
+    config_path = (repo_root / args.config).resolve()
+    stage_root = prepare_stage(repo_root, args.target_date)
+
+    result = run(
+        target_date=args.target_date,
+        config_path=config_path,
+        root=stage_root,
+        refresh_mapping=args.refresh_mapping,
+    )
     payload = result["payload"]
     append_index_history(
-        Path("data/history/indices_history.csv"),
+        stage_root / "data/history/indices_history.csv",
         list((payload.get("indices") or {}).values()),
     )
     append_hot_stock_history(
-        Path("data/history/hot_stocks.csv"),
+        stage_root / "data/history/hot_stocks.csv",
         args.target_date,
         payload.get("hot_stocks") or [],
     )
-    validation = result["validation"]
-    print(f"completed date={args.target_date} status={validation['status']} output={result['output_dir']}")
+
+    output_dir = repo_root / "output" / args.target_date
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _copy_raw_outputs(Path(result["output_dir"]), output_dir)
+
+    canonical_validation = validate_candidate(stage_root, repo_root, args.target_date)
+    validation_path = output_dir / "canonical_validation.json"
+    validation_path.write_text(
+        json.dumps(canonical_validation, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    promote_candidate(stage_root, repo_root, args.target_date, canonical_validation)
+
+    payload_validation = result["validation"]
+    print(
+        f"completed date={args.target_date} payload_status={payload_validation['status']} "
+        f"canonical_status={canonical_validation['status']} output={output_dir}"
+    )
 
 
 if __name__ == "__main__":
