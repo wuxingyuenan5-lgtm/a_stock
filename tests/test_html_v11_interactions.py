@@ -40,11 +40,12 @@ class HtmlV11InteractionsTest(unittest.TestCase):
         html=render_html(self._report())
         count=html.count('data-time-chart="1"')
         self.assertGreaterEqual(count, 6)
-        self.assertEqual(html.count('class="range-input range-start"'), count)
-        self.assertEqual(html.count('class="range-input range-end"'), count)
-        self.assertEqual(html.count('class="range-reset"'), count)
-        self.assertIn('data-range-start="0"', html)
-        self.assertIn('range-selection', html)
+        self.assertEqual(html.count('class="time-range-start"'), count)
+        self.assertEqual(html.count('class="time-range-end"'), count)
+        self.assertEqual(html.count('class="time-range-all"'), count)
+        self.assertEqual(html.count('class="time-range-label"'), count)
+        self.assertIn('start.value="0"', html)
+        self.assertIn('end.value=String(Math.max(0,dates.length-1))', html)
 
     def test_sw_three_state_sort_contract(self):
         html=render_html(self._report())
