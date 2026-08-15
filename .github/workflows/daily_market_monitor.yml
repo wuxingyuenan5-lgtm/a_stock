@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       full_refresh_sw_industry:
-        description: "Run slow per-index Shenwan history refresh instead of fast bulk incremental refresh"
+        description: "Run slow per-index Shenwan history refresh inside Canonical staging"
         required: false
         type: boolean
         default: false
@@ -21,6 +21,7 @@ on:
     paths:
       - run_daily.py
       - run_history_preflight.py
+      - validate_canonical_data.py
       - build_report_data.py
       - render_market_monitor_html.py
       - validate_market_monitor_html.py
@@ -83,7 +84,7 @@ jobs:
       - name: Fast syntax preflight
         run: |
           python -m py_compile \
-            run_daily.py run_history_preflight.py build_report_data.py \
+            run_daily.py run_history_preflight.py validate_canonical_data.py build_report_data.py \
             render_market_monitor_html.py validate_market_monitor_html.py \
             prepare_render_bundle.py excel_renderer_artifact.py \
             run_excel_renderer.py run_excel_renderer_v14.py run_excel_renderer_v15.py \
@@ -100,6 +101,9 @@ jobs:
         shell: bash
         run: |
           python run_history_preflight.py --target-date "2026-08-14"
+          python validate_canonical_data.py \
+            --target-date "2026-08-14" \
+            --output "output/2026-08-14/canonical_validation.json"
           python build_report_data.py --target-date "2026-08-14"
           python render_market_monitor_html.py \
             --input "output/2026-08-14/report_data.json" \
@@ -117,6 +121,8 @@ jobs:
           path: |
             output/2026-08-14/A股每日市场监控_20260814.html
             output/2026-08-14/report_data.json
+            output/2026-08-14/canonical_manifest.json
+            output/2026-08-14/canonical_validation.json
             output/2026-08-14/html_validation.json
             output/2026-08-14/history_preflight.json
             data/history/indices_history.csv
@@ -127,37 +133,25 @@ jobs:
         if: github.event_name != 'pull_request'
         run: python run_history_preflight.py --target-date "${{ steps.date.outputs.value }}"
 
-      - name: Refresh Shenwan crowding cache once
-        if: github.event_name != 'pull_request'
-        run: python refresh_sw_crowding.py
-
       - name: Produce normalized payload
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          extra=""
+          args=""
           if [ "${{ inputs.refresh_mapping }}" = "true" ]; then
-            extra="--refresh-mapping"
+            args="$args --refresh-mapping"
           fi
-          python run_daily.py --target-date "${{ steps.date.outputs.value }}" $extra
-
-      - name: Refresh Shenwan industry snapshot
-        if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          target="${{ steps.date.outputs.value }}"
-          today="$(date +%F)"
           if [ "${{ inputs.full_refresh_sw_industry }}" = "true" ]; then
-            echo "Running full Shenwan history refresh"
-            python update_sw_industry.py --history-rows 260 --workers 4 --sleep-seconds 0.15 \
-              || echo "::warning::Full Shenwan refresh failed; report will use the last validated cached snapshot."
-          elif [ "$target" = "$today" ]; then
-            echo "Running fast bulk Shenwan incremental refresh"
-            python update_sw_industry_fast.py --target-date "$target" \
-              || echo "::warning::Fast Shenwan refresh failed; report will use the last validated cached snapshot."
-          else
-            echo "::notice::Historical target date; skip realtime Shenwan refresh and use validated cache."
+            args="$args --full-refresh-sw-industry"
           fi
+          python run_daily.py --target-date "${{ steps.date.outputs.value }}" $args
+
+      - name: Validate Canonical data
+        if: github.event_name != 'pull_request'
+        run: |
+          python validate_canonical_data.py \
+            --target-date "${{ steps.date.outputs.value }}" \
+            --output "output/${{ steps.date.outputs.value }}/canonical_validation.json"
 
       - name: Build normalized report data
         if: github.event_name != 'pull_request'
@@ -187,19 +181,24 @@ jobs:
           from pathlib import Path
           d = "${{ steps.date.outputs.value }}"
           compact = "${{ steps.date.outputs.compact }}"
-          validation = json.loads(Path(f"output/{d}/html_validation.json").read_text(encoding="utf-8"))
+          html_validation = json.loads(Path(f"output/{d}/html_validation.json").read_text(encoding="utf-8"))
+          canonical_validation = json.loads(Path(f"output/{d}/canonical_validation.json").read_text(encoding="utf-8"))
           pointer = {
               "date": d,
               "run_id": int(os.environ["GITHUB_RUN_ID"]),
               "artifact_name": f"a-share-monitor-html-{d}",
               "primary_file": f"A股每日市场监控_{compact}.html",
               "data_contract": "report_data.json",
+              "canonical_validation_file": "canonical_validation.json",
+              "canonical_validation_status": canonical_validation["status"],
               "validation_file": "html_validation.json",
-              "validation_status": validation["status"],
+              "validation_status": html_validation["status"],
               "runtime_manifest": "config/html_production_runtime.json",
               "workflow": "daily_market_monitor.yml"
           }
-          Path("data/latest_bundle_pointer.json").write_text(json.dumps(pointer, ensure_ascii=False, indent=2), encoding="utf-8")
+          Path("data/latest_bundle_pointer.json").write_text(
+              json.dumps(pointer, ensure_ascii=False, indent=2), encoding="utf-8"
+          )
           print(json.dumps(pointer, ensure_ascii=False))
           PY
 
@@ -211,6 +210,8 @@ jobs:
           path: |
             output/${{ steps.date.outputs.value }}/A股每日市场监控_${{ steps.date.outputs.compact }}.html
             output/${{ steps.date.outputs.value }}/report_data.json
+            output/${{ steps.date.outputs.value }}/canonical_manifest.json
+            output/${{ steps.date.outputs.value }}/canonical_validation.json
             output/${{ steps.date.outputs.value }}/html_validation.json
             output/${{ steps.date.outputs.value }}/history_preflight.json
             output/${{ steps.date.outputs.value }}/source_manifest.json
