@@ -43,6 +43,7 @@ def promote_candidate(
     stage_root = stage_root.resolve()
     canonical_root = canonical_root.resolve()
     table_manifest: dict[str, dict[str, object]] = {}
+    normalization = validation.get("normalization") if isinstance(validation.get("normalization"), dict) else {}
 
     for name, spec in CANONICAL_TABLES.items():
         src = stage_root / spec.path
@@ -63,6 +64,7 @@ def promote_candidate(
             "after": after,
             "modified_historical_dates": list(validation_table.get("modified_historical_dates") or []),
             "target_date_changed_keys": int(validation_table.get("target_date_changed_keys") or 0),
+            "normalization": normalization.get(name, {}),
         }
 
     sw_latest_src = stage_root / "data/sw_industry_latest.csv"
@@ -75,6 +77,7 @@ def promote_candidate(
         "validation_status": validation.get("status"),
         "failures": list(validation.get("failures") or []),
         "warnings": list(validation.get("warnings") or []),
+        "normalization": normalization,
         "tables": table_manifest,
     }
     output = canonical_root / "output" / target_date / "canonical_manifest.json"
