@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from market_monitor.production import run
 from market_monitor.history_preflight import append_index_history
+from build_report_data import append_hot_stock_history
 
 
 def default_date() -> str:
@@ -35,6 +36,11 @@ def main() -> None:
     append_index_history(
         Path("data/history/indices_history.csv"),
         list((payload.get("indices") or {}).values()),
+    )
+    append_hot_stock_history(
+        Path("data/history/hot_stocks.csv"),
+        args.target_date,
+        payload.get("hot_stocks") or [],
     )
     validation = result["validation"]
     print(f"completed date={args.target_date} status={validation['status']} output={result['output_dir']}")
