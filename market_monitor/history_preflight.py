@@ -9,6 +9,8 @@ from .collectors import fetch_eastmoney_index, _fetch_em_klines
 
 INDEX_NAMES = ("上证50", "Choice微盘", "中证全指")
 INDEX_FIELDS = ("date", "name", "code", "close", "return", "amount_100m", "source", "status")
+INDEX_REQUIRED_FIELDS = ("return", "amount_100m")
+INDEX_HISTORY_WINDOW = 5
 MAX_SPARSE_FALLBACK_DATES = 5
 MARKET_CORE_FILE = "market_core.csv"
 MARKET_VERIFIED_BACKFILL_FILE = "market_core_verified_backfill.csv"
@@ -31,13 +33,7 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
 
 
 def read_market_core_rows(root: Path) -> list[dict[str, str]]:
-    """Return canonical market-core history with explicit verified migration rows overlaid.
-
-    The base CSV remains the day-to-day append target. A small verified-backfill file
-    records historical rows recovered from previously validated official workbooks.
-    Backfill rows intentionally win by date, which keeps provenance explicit and avoids
-    silently rewriting the long base history during migration.
-    """
+    """Return canonical market-core history with explicit verified migration rows overlaid."""
     history_dir = root / "data" / "history"
     merged: dict[str, dict[str, str]] = {}
     for filename in (MARKET_CORE_FILE, MARKET_VERIFIED_BACKFILL_FILE):
@@ -165,17 +161,24 @@ def _innovation_amount_dates(path: Path, report_date: str) -> set[str]:
 
 
 def scan_history_gaps(root: Path, report_date: str, required_index_dates: list[str] | None = None) -> dict[str, object]:
+    """Scan display-relevant history.
+
+    The daily HTML only displays the latest five index sessions and uses return +
+    turnover amount. Historical close remains an optional reference field, so the
+    preflight does not create hundreds of irrelevant warnings or network calls for it.
+    Explicit callers may still pass required_index_dates for a targeted historical audit.
+    """
     history_dir = root / "data" / "history"
     market_rows = read_market_core_rows(root)
     market_dates = [str(r.get("date") or "")[:10] for r in market_rows if r.get("date") and str(r.get("date"))[:10] <= report_date]
-    dates_to_scan = required_index_dates if required_index_dates is not None else market_dates
+    dates_to_scan = required_index_dates if required_index_dates is not None else market_dates[-INDEX_HISTORY_WINDOW:]
     index_rows = read_index_history(history_dir / "indices_history.csv")
     by_key = {(str(r["date"]), str(r["name"])): r for r in index_rows}
     index_gaps = []
     for d in dates_to_scan:
         for name in INDEX_NAMES:
             row = by_key.get((d, name))
-            missing = [field for field in ("close", "return", "amount_100m") if not row or row.get(field) is None]
+            missing = [field for field in INDEX_REQUIRED_FIELDS if not row or row.get(field) is None]
             if missing:
                 index_gaps.append({"date": d, "name": name, "fields": missing})
     denominator_gaps = sorted(
@@ -186,7 +189,7 @@ def scan_history_gaps(root: Path, report_date: str, required_index_dates: list[s
 
 
 def preflight_history(root: Path, report_date: str, definitions: list[dict[str, str]], repair_indices: bool = True) -> dict[str, object]:
-    """Scan history, bulk-bootstrap large index gaps, then bounded sparse repairs."""
+    """Scan display-relevant history, bulk-bootstrap gaps, then bounded sparse repairs."""
     before = scan_history_gaps(root, report_date)
     path = root / "data" / "history" / "indices_history.csv"
     had_large_gap = False
