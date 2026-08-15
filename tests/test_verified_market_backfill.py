@@ -32,7 +32,7 @@ class VerifiedMarketBackfillTest(unittest.TestCase):
             gaps = scan_history_gaps(root, "2026-08-14", required_index_dates=[])
             self.assertNotIn("2026-08-13", gaps["market_denominator_dates"])
 
-    def test_report_data_merges_verified_market_row_and_recovers_innovation_share(self):
+    def test_report_data_uses_canonical_migrated_market_row_and_recovers_innovation_share(self):
         from build_report_data import build_report_data
         with TemporaryDirectory() as td:
             root = Path(td)
@@ -46,10 +46,8 @@ class VerifiedMarketBackfillTest(unittest.TestCase):
             (out / "daily_payload.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             (out / "validation.json").write_text(json.dumps({"status":"PASS","checks":[]}), encoding="utf-8")
             self._csv(root / "data/history/market_core.csv", ["date","advance","decline","flat","limit_up","limit_down","effective_stocks","total_amount_100m","hot_count","hot_amount_100m","hot_concentration","market_breadth"], [
+                {"date":"2026-08-13","advance":1087,"decline":4166,"flat":77,"limit_up":59,"limit_down":4,"effective_stocks":5330,"total_amount_100m":25484.53569867,"hot_count":23,"hot_amount_100m":3365.68102697,"hot_concentration":0.1320675827,"market_breadth":-0.5861412526},
                 {"date":"2026-08-14","advance":2306,"decline":2871,"flat":154,"limit_up":62,"limit_down":13,"effective_stocks":5331,"total_amount_100m":21415.4,"hot_count":0,"hot_amount_100m":0,"hot_concentration":0,"market_breadth":-0.1091},
-            ])
-            self._csv(root / "data/history/market_core_verified_backfill.csv", ["date","advance","decline","flat","limit_up","limit_down","effective_stocks","total_amount_100m","hot_count","hot_amount_100m","hot_concentration","market_breadth","source"], [
-                {"date":"2026-08-13","advance":1087,"decline":4166,"flat":77,"limit_up":59,"limit_down":4,"effective_stocks":5330,"total_amount_100m":25484.53569867,"hot_count":23,"hot_amount_100m":3365.68102697,"hot_concentration":0.1320675827,"market_breadth":-0.5861412526,"source":"verified workbook"},
             ])
             self._csv(root / "data/history/innovation_drug_eastmoney.csv", ["日期","成交额","换手率","日收益率","成交量","数据源"], [
                 {"日期":"2026-08-13","成交额":129316966098,"换手率":0.047,"日收益率":0.0187,"成交量":70817912,"数据源":"eastmoney"},
