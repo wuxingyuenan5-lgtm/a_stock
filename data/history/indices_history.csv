@@ -1,0 +1,16 @@
+date,name,code,close,return,amount_100m,source,status
+2026-08-10,上证50,1.000016,,0.0025,2097.6947423,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-10,Choice微盘,47.800007,,0.0327,211.22386688,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-10,中证全指,1.000985,,0.0052,24470.51479411,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-11,上证50,1.000016,,-0.0127,1815.12240624,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-11,Choice微盘,47.800007,,-0.0026,176.91525632,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-11,中证全指,1.000985,,-0.0071,22504.54136597,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-12,上证50,1.000016,,0.0029,1558.42126262,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-12,Choice微盘,47.800007,,0.0114,159.02681344,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-12,中证全指,1.000985,,0.0096,20787.58991092,A股每日市场监控_20260814_最终修正版.xlsx/02_统一历史数据 verified migration,ok_verified_workbook_migration
+2026-08-13,上证50,1.000016,2928.12,-0.0035,1901.77260859,东方财富历史K线批量直连 verified acceptance run,ok_bulk_history_verified
+2026-08-13,Choice微盘,47.800007,1817.81,-0.0125,175.53131264,东方财富历史K线批量直连 verified acceptance run,ok_bulk_history_verified
+2026-08-13,中证全指,1.000985,5973.27,-0.0084,24721.77033941,东方财富历史K线批量直连 verified acceptance run,ok_bulk_history_verified
+2026-08-14,上证50,1.000016,2916.13,-0.0041,1523.71929566,2026-08-14 validated daily production,ok_current_quote_validated
+2026-08-14,Choice微盘,47.800007,1823.92,0.0034,160.96252928,2026-08-14 validated daily production,ok_current_quote_validated
+2026-08-14,中证全指,1.000985,5991.02,0.003,20797.76591782,2026-08-14 validated daily production,ok_current_quote_validated
