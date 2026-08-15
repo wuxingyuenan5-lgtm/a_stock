@@ -334,13 +334,13 @@ def render_html(report: dict) -> str:
 '''
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>A股每日市场监控 {escape(target)}</title><style>{style}</style></head><body><div class="page">
 <header class="hero"><div class="hero-top"><div><h1>A股每日市场监控</h1><div class="meta">报告日期 {escape(target)} ｜ 申万行业最新有效日 {escape(str(sw_latest))} ｜ 单文件离线报告</div></div><div class="status {status_class}">数据状态 {escape(status)}</div></div></header><div class="kpis">{kpi_html}</div>
-<section class="section"><div class="section-title">01｜市场涨跌结构</div><div class="card"><div class="subnote">上涨/下跌家数使用左轴；涨停/跌停家数使用右轴。右侧预留安全边距，最新日期不会与右轴刻度重叠。</div><div class="chart-card">{_svg_market_structure(market)}</div></div></section>
-<section class="section"><div class="section-title">02｜市场宽度</div><div class="card"><div class="chart-card">{_svg_line(market, "market_breadth", "市场宽度", True, True, NAVY)}</div></div></section>
-<section class="section"><div class="section-title">03｜最近交易日指数与成交</div><div class="card">{_recent_indices(report)}</div></section>
-<section class="section"><div class="section-title">04｜申万行业</div><div class="card"><div class="subnote">完整展示最新批量快照，可在本页搜索与筛选。</div>{_sw_industry(report)}</div></section>
-<section class="section"><div class="section-title">05｜百亿成交</div><div class="card"><h3>最近日期矩阵</h3>{_hot_matrix(report)}<h3 style="margin-top:18px">{escape(target)} 成交额超过100亿元个股｜完整明细 {hot_count} 只</h3>{_hot_detail(report)}</div></section>
-<section class="section"><div class="section-title">06｜申万四行业资金拥挤度</div><div class="card">{_crowding(report)}</div></section>
-<section class="section"><div class="section-title">07｜创新药交易拥挤度</div><div class="card"><div class="subnote">仅使用供应商直接板块换手率；20日成交量活跃度代理已永久停用。</div>{_innovation(report)}</div></section>
+<section class="section"><div class="section-title">00｜市场总览 · 市场涨跌结构</div><div class="card"><div class="subnote">上涨/下跌家数使用左轴；涨停/跌停家数使用右轴。右侧预留安全边距，最新日期不会与右轴刻度重叠。</div><div class="chart-card">{_svg_market_structure(market)}</div></div></section>
+<section class="section"><div class="section-title">00｜市场总览 · 市场宽度</div><div class="card"><div class="chart-card">{_svg_line(market, "market_breadth", "市场宽度", True, True, NAVY)}</div></div></section>
+<section class="section"><div class="section-title">00｜市场总览 · 最近交易日指数与成交</div><div class="card">{_recent_indices(report)}</div></section>
+<section class="section"><div class="section-title">01｜申万行业</div><div class="card"><div class="subnote">完整展示最新批量快照，可在本页搜索与筛选。</div>{_sw_industry(report)}</div></section>
+<section class="section"><div class="section-title">04｜百亿成交</div><div class="card"><h3>最近日期矩阵</h3>{_hot_matrix(report)}<h3 style="margin-top:18px">{escape(target)} 成交额超过100亿元个股｜完整明细 {hot_count} 只</h3>{_hot_detail(report)}</div></section>
+<section class="section"><div class="section-title">05｜申万四行业资金拥挤度</div><div class="card">{_crowding(report)}</div></section>
+<section class="section"><div class="section-title">06｜创新药交易拥挤度</div><div class="card"><div class="subnote">仅使用供应商直接板块换手率；20日成交量活跃度代理已永久停用。</div>{_innovation(report)}</div></section>
 <section class="section"><div class="section-title">99｜数据质量</div><div class="card">{_quality(report)}</div></section></div>
 <script>(function(){{const q=document.getElementById('swSearch'),s=document.getElementById('swLevel');function filter(){{const text=(q?.value||'').trim().toLowerCase(),level=s?.value||'';document.querySelectorAll('.sw-table tbody tr').forEach(tr=>{{const cells=Array.from(tr.cells).map(x=>x.textContent.trim());tr.style.display=(!text||tr.textContent.toLowerCase().includes(text))&&(!level||cells[0]===level)?'':'none';}})}}q?.addEventListener('input',filter);s?.addEventListener('change',filter);}})();</script></body></html>'''
     return html
