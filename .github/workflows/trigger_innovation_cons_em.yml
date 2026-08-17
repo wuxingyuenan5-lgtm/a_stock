@@ -1,0 +1,9 @@
+name: Trigger Innovation THS Diagnostic
+on:
+  workflow_dispatch:
+# diagnostic retry 2026-08-10 16:52 CST
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo innovation-ths-diagnostic

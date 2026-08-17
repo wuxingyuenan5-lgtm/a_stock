@@ -1,0 +1,9 @@
+name: Trigger Innovation Drug 20260810
+on:
+  workflow_dispatch:
+# retry legacy git tag: 2026-08-10 16:46 CST
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo innovation-drug-legacy-tag

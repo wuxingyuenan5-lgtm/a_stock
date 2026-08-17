@@ -1,0 +1,10 @@
+name: Trigger 20260810 Snapshot
+on:
+  workflow_dispatch:
+# trigger historical core + innovation drug refresh
+# retry-marker: 2026-08-10-1620
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo trigger-20260810-retry
